@@ -255,7 +255,7 @@ export default function Home() {
         </Link>
 
         <Link
-          href="/clients"
+          href="/clients/page.tsx"
           className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-600 transition hover:border-violet-300 hover:text-violet-700"
         >
           Clients →
