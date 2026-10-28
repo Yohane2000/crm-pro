@@ -217,7 +217,7 @@ export default function ClientsPage() {
         </Link>
 
         <Link
-          href="clients"
+          href="/clients"
           className="rounded-lg bg-violet-600 px-4 py-2.5 text-xs font-semibold text-white"
         >
           Clients
