@@ -16,7 +16,6 @@ event.preventDefault();
 setError("");
 setLoading(true);
 
-```
 try {
   const supabase = createSupabaseBrowserClient();
 
@@ -37,14 +36,12 @@ try {
 } finally {
   setLoading(false);
 }
-```
 
 }
 
 return ( <main className="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-12 text-white"> <section className="w-full max-w-md rounded-2xl border border-white/10 bg-white/5 p-8 shadow-2xl"> <div className="mb-8 text-center"> <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-600 text-2xl font-bold">
 N </div>
 
-```
       <h1 className="text-3xl font-bold tracking-tight">
         Nexora CRM
       </h1>
@@ -118,7 +115,6 @@ N </div>
     </p>
   </section>
 </main>
-```
 
 );
 }
