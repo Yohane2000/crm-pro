@@ -522,8 +522,8 @@ export default function ClientsPage() {
                           client.status === "Actif"
                             ? "bg-emerald-50 text-emerald-700"
                             : client.status === "Prospect"
-                              ? "bg-violet-50 text-violet-700"
-                              : "bg-orange-50 text-orange-700"
+                            ? "bg-violet-50 text-violet-700"
+                            : "bg-orange-50 text-orange-700"
                         }`}
                       >
                         <span className="h-1.5 w-1.5 rounded-full bg-current" />
@@ -579,4 +579,3 @@ export default function ClientsPage() {
     </main>
   );
 }
-
