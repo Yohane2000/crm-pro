@@ -6,6 +6,7 @@ import { createSupabaseBrowserClient } from "../../lib/supabase-browser";
 
 export default function LoginPage() {
 const router = useRouter();
+
 const [email, setEmail] = useState("");
 const [password, setPassword] = useState("");
 const [error, setError] = useState("");
@@ -25,23 +26,25 @@ try {
   });
 
   if (loginError) {
-    setError("Connexion impossible. Vérifie ton e-mail et ton mot de passe.");
+    setError(
+      "Connexion impossible. Vérifie ton e-mail et ton mot de passe."
+    );
     return;
   }
 
   router.replace("/");
   router.refresh();
 } catch {
-  setError("Une erreur est survenue. Réessaie dans quelques instants.");
+  setError(
+    "Une erreur est survenue. Réessaie dans quelques instants."
+  );
 } finally {
   setLoading(false);
 }
-
 }
 
 return ( <main className="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-12 text-white"> <section className="w-full max-w-md rounded-2xl border border-white/10 bg-white/5 p-8 shadow-2xl"> <div className="mb-8 text-center"> <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-600 text-2xl font-bold">
 N </div>
-
       <h1 className="text-3xl font-bold tracking-tight">
         Nexora CRM
       </h1>
