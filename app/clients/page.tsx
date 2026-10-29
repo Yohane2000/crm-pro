@@ -281,17 +281,21 @@ export default function ClientsPage() {
       setShowForm(false);
       setEditingClient(null);
       setForm({ ...emptyForm });
-    } catch (err) {
-      console.error("Erreur d'enregistrement :", err);
-      if (err instanceof Error && err.message === "SESSION_REQUIRED") {
-        setError("Ta session a expiré. Reconnecte-toi avant d'enregistrer un client.");
-      } else {
-        setError(
-          editingClient
-            ? "La modification a échoué. Vérifie les autorisations Supabase."
-            : "L'enregistrement a échoué. Vérifie les autorisations Supabase."
-        );
-      }
+    } catch (err: unknown) {
+console.error("Erreur détaillée d'enregistrement :", err);
+
+const details =
+err instanceof Error
+? err.message
+: typeof err === "object" && err !== null && "message" in err
+? String(err.message)
+: "Erreur inconnue";
+
+setError(
+`${editingClient ? "Modification impossible" : "Enregistrement impossible"} : ${details}`
+);
+}
+
     } finally {
       setSaving(false);
     }
