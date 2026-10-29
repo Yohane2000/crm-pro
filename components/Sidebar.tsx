@@ -32,7 +32,7 @@ role?: string | null;
 
 export default function Sidebar() {
 const pathname = usePathname();
-const router = useRouter();
+const [supabase] = useState(() => createSupabaseBrowserClient());
 
 const [userName, setUserName] = useState("Utilisateur");
 const [userRole, setUserRole] = useState("Membre");
