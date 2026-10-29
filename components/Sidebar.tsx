@@ -25,19 +25,16 @@ items: [
 },
 ];
 
-type Profile = {
-full_name?: string | null;
-role?: string | null;
-};
-
 export default function Sidebar() {
 const pathname = usePathname();
 const router = useRouter();
 
 const [supabase] = useState(() => createSupabaseBrowserClient());
+
 const [userName, setUserName] = useState("Chargement...");
 const [userRole, setUserRole] = useState("Membre");
 const [initials, setInitials] = useState("U");
+const [signingOut, setSigningOut] = useState(false);
 
 useEffect(() => {
 let active = true;
@@ -58,51 +55,29 @@ async function loadUser() {
       return;
     }
 
-    let name =
+    const name =
       user.user_metadata?.full_name ||
       user.user_metadata?.name ||
       user.user_metadata?.display_name ||
       user.email?.split("@")[0] ||
       "Utilisateur";
 
-    let role =
+    // Le rôle affiché provient des métadonnées disponibles.
+    // Sans rôle défini, on affiche simplement « Membre ».
+    const role =
       user.app_metadata?.role ||
       user.user_metadata?.role ||
       "Membre";
 
-    // Le profil est facultatif : si la table n'existe pas
-    // ou si elle est inaccessible, les métadonnées restent utilisées.
-    try {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("full_name, role")
-        .eq("id", user.id)
-        .maybeSingle();
+    const nameParts = String(name).trim().split(/\s+/);
 
-      const profileData = profile as Profile | null;
-
-      if (profileData?.full_name) {
-        name = profileData.full_name;
-      }
-
-      if (profileData?.role) {
-        role = profileData.role;
-      }
-    } catch {
-      // On conserve les informations disponibles dans Auth.
-    }
-
-    if (!active) return;
-
-    setUserName(name);
-    setUserRole(role);
-
-    const parts = name.trim().split(/\s+/);
     const avatarInitials =
-      parts.length > 1
-        ? `${parts[0][0]}${parts[parts.length - 1][0]}`
-        : parts[0]?.slice(0, 2) || "U";
+      nameParts.length > 1
+        ? `${nameParts[0][0]}${nameParts[nameParts.length - 1][0]}`
+        : nameParts[0]?.slice(0, 2) || "U";
 
+    setUserName(String(name));
+    setUserRole(String(role));
     setInitials(avatarInitials.toUpperCase());
   } catch {
     if (!active) return;
@@ -129,21 +104,29 @@ return () => {
 }, [supabase]);
 
 async function handleLogout() {
-const { error } = await supabase.auth.signOut();
+if (signingOut) return;
 
-if (error) {
-  console.error("Erreur de déconnexion :", error.message);
-  return;
+setSigningOut(true);
+
+try {
+  const { error } = await supabase.auth.signOut();
+
+  if (error) {
+    console.error("Erreur de déconnexion :", error.message);
+    setSigningOut(false);
+    return;
+  }
+
+  router.replace("/login");
+  router.refresh();
+} catch {
+  setSigningOut(false);
 }
-
-router.replace("/login");
-router.refresh();
 
 }
 
 return ( <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-slate-200 bg-white p-5 md:flex"> <Link href="/" className="mb-9 flex items-center gap-3 px-1"> <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-600 text-xl font-bold text-white shadow-lg shadow-violet-200">
 N </div>
-
     <div>
       <h2 className="text-xl font-extrabold tracking-tight">
         Nexora<span className="text-violet-600">.</span>
@@ -229,9 +212,10 @@ N </div>
     <button
       type="button"
       onClick={handleLogout}
+      disabled={signingOut}
       title="Se déconnecter"
       aria-label="Se déconnecter"
-      className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+      className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
     >
       ↪
     </button>
