@@ -133,7 +133,7 @@ export default function ClientsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [supabase]);
 
   useEffect(() => {
     void loadClients();
@@ -253,7 +253,7 @@ export default function ClientsPage() {
 
         setNotice("Les modifications du client ont été enregistrées.");
       } else {
-        // Vérifie la session avant de créer un client et lie-le au compte connecté.
+        // Vérifie la session avant de créer un client.
         const {
           data: { user },
           error: userError,
@@ -263,6 +263,7 @@ export default function ClientsPage() {
           throw new Error("SESSION_REQUIRED");
         }
 
+        // Associe le nouveau client à l'utilisateur connecté.
         const { data, error: insertError } = await supabase
           .from("clients")
           .insert({ ...payload, user_id: user.id })
@@ -282,20 +283,26 @@ export default function ClientsPage() {
       setEditingClient(null);
       setForm({ ...emptyForm });
     } catch (err: unknown) {
-console.error("Erreur détaillée d'enregistrement :", err);
+      console.error("Erreur détaillée d'enregistrement :", err);
 
-const details =
-err instanceof Error
-? err.message
-: typeof err === "object" && err !== null && "message" in err
-? String(err.message)
-: "Erreur inconnue";
+      const details =
+        err instanceof Error
+          ? err.message
+          : typeof err === "object" && err !== null && "message" in err
+            ? String(err.message)
+            : "Erreur inconnue";
 
-setError(
-`${editingClient ? "Modification impossible" : "Enregistrement impossible"} : ${details}`
-);
-}
-
+      if (details === "SESSION_REQUIRED") {
+        setError(
+          "Ta session a expiré. Reconnecte-toi avant d'enregistrer un client."
+        );
+      } else {
+        setError(
+          `${
+            editingClient ? "Modification impossible" : "Enregistrement impossible"
+          } : ${details}`
+        );
+      }
     } finally {
       setSaving(false);
     }
@@ -333,9 +340,15 @@ setError(
       setNotice(`La fiche de ${client.name} a été supprimée.`);
     } catch (err) {
       console.error("Erreur de suppression :", err);
-      setError(
-        "La suppression a échoué. Vérifie les autorisations Supabase."
-      );
+
+      const details =
+        err instanceof Error
+          ? err.message
+          : typeof err === "object" && err !== null && "message" in err
+            ? String(err.message)
+            : "Erreur inconnue";
+
+      setError(`La suppression a échoué : ${details}`);
     } finally {
       setDeletingId(null);
     }
