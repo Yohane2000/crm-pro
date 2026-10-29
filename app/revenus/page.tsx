@@ -215,6 +215,148 @@ export default function RevenusPage() {
     await loadData();
   }
 
+  async function downloadInvoicePdf(invoice: Invoice) {
+    const { jsPDF } = await import("jspdf");
+    const pdf = new jsPDF({ unit: "mm", format: "a4" });
+    const client = Array.isArray(invoice.clients) ? invoice.clients[0] : invoice.clients;
+    const invoicePayments = payments
+      .filter((payment) => payment.invoice_id === invoice.id)
+      .sort((a, b) => a.payment_date.localeCompare(b.payment_date));
+    const total = Number(invoice.total_amount) || 0;
+    const received = paid(invoice);
+    const balance = Math.max(0, total - received);
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const margin = 18;
+    let y = 20;
+
+    pdf.setFillColor(91, 33, 182);
+    pdf.roundedRect(margin, y, 12, 12, 2, 2, "F");
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(13);
+    pdf.text("N", margin + 3.7, y + 8.2);
+    pdf.setTextColor(30, 41, 59);
+    pdf.setFontSize(20);
+    pdf.text("NEXORA", margin + 16, y + 8);
+    pdf.setFontSize(9);
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(100, 116, 139);
+    pdf.text("CRM · Gestion des factures", margin + 16, y + 13);
+
+    pdf.setTextColor(91, 33, 182);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(22);
+    pdf.text("FACTURE", pageWidth - margin, y + 7, { align: "right" });
+    pdf.setTextColor(51, 65, 85);
+    pdf.setFontSize(10);
+    pdf.text(invoice.invoice_number, pageWidth - margin, y + 14, { align: "right" });
+
+    y = 48;
+    pdf.setDrawColor(226, 232, 240);
+    pdf.line(margin, y, pageWidth - margin, y);
+    y += 12;
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(10);
+    pdf.setTextColor(100, 116, 139);
+    pdf.text("FACTURÉ À", margin, y);
+    pdf.text("DATES", pageWidth / 2 + 5, y);
+    y += 7;
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(11);
+    pdf.setTextColor(30, 41, 59);
+    pdf.text(client?.name || "Client", margin, y);
+    pdf.text(`Émission : ${invoice.issue_date}`, pageWidth / 2 + 5, y);
+    y += 6;
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(10);
+    pdf.setTextColor(71, 85, 105);
+    if (client?.company) { pdf.text(client.company, margin, y); y += 5; }
+    if (client?.email) { pdf.text(client.email, margin, y); y += 5; }
+    pdf.text(`Échéance : ${invoice.due_date || "Non définie"}`, pageWidth / 2 + 5, y - (client?.email ? 10 : client?.company ? 5 : 0));
+
+    y = Math.max(y + 8, 91);
+    pdf.setFillColor(248, 250, 252);
+    pdf.roundedRect(margin, y, pageWidth - margin * 2, 12, 2, 2, "F");
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(9);
+    pdf.setTextColor(71, 85, 105);
+    pdf.text("PRESTATION", margin + 4, y + 7.5);
+    pdf.text("MONTANT", pageWidth - margin - 4, y + 7.5, { align: "right" });
+    y += 19;
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(11);
+    pdf.setTextColor(30, 41, 59);
+    const titleLines = pdf.splitTextToSize(invoice.title, pageWidth - margin * 2 - 42);
+    pdf.text(titleLines, margin + 4, y);
+    pdf.setFont("helvetica", "bold");
+    pdf.text(money(total), pageWidth - margin - 4, y, { align: "right" });
+    y += Math.max(7, titleLines.length * 5);
+    if (invoice.description) {
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(9);
+      pdf.setTextColor(100, 116, 139);
+      const descriptionLines = pdf.splitTextToSize(invoice.description, pageWidth - margin * 2 - 8);
+      pdf.text(descriptionLines, margin + 4, y);
+      y += descriptionLines.length * 4.5 + 4;
+    }
+    pdf.setDrawColor(226, 232, 240);
+    pdf.line(margin, y, pageWidth - margin, y);
+    y += 10;
+    const summaryX = pageWidth - margin - 72;
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(10);
+    pdf.setTextColor(71, 85, 105);
+    pdf.text("Total facture", summaryX, y);
+    pdf.text(money(total), pageWidth - margin, y, { align: "right" });
+    y += 7;
+    pdf.text("Total encaissé", summaryX, y);
+    pdf.setTextColor(5, 150, 105);
+    pdf.text(money(received), pageWidth - margin, y, { align: "right" });
+    y += 7;
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(30, 41, 59);
+    pdf.text("Solde restant", summaryX, y);
+    pdf.setTextColor(balance > 0 ? 194 : 5, balance > 0 ? 65 : 150, balance > 0 ? 12 : 105);
+    pdf.text(money(balance), pageWidth - margin, y, { align: "right" });
+    y += 13;
+
+    if (invoicePayments.length) {
+      if (y > 235) { pdf.addPage(); y = 20; }
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(11);
+      pdf.setTextColor(30, 41, 59);
+      pdf.text("Historique des paiements", margin, y);
+      y += 7;
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(9);
+      for (const payment of invoicePayments) {
+        if (y > 270) { pdf.addPage(); y = 20; }
+        pdf.setTextColor(71, 85, 105);
+        pdf.text(`${payment.payment_date} · ${payment.payment_method}`, margin, y);
+        pdf.setTextColor(5, 150, 105);
+        pdf.text(money(Number(payment.amount)), pageWidth - margin, y, { align: "right" });
+        y += 6;
+      }
+    }
+
+    if (invoice.notes) {
+      y += 5;
+      if (y > 265) { pdf.addPage(); y = 20; }
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(71, 85, 105);
+      pdf.text("Notes", margin, y);
+      y += 5;
+      pdf.setFont("helvetica", "normal");
+      const noteLines = pdf.splitTextToSize(invoice.notes, pageWidth - margin * 2);
+      pdf.text(noteLines, margin, y);
+    }
+
+    pdf.setFontSize(8);
+    pdf.setTextColor(148, 163, 184);
+    pdf.text("Document généré par Nexora CRM", pageWidth / 2, 287, { align: "center" });
+    pdf.save(`${invoice.invoice_number.replace(/[^a-zA-Z0-9_-]/g, "_")}.pdf`);
+  }
+
   function openPayment(invoice: Invoice) {
     setPaymentInvoice(invoice);
     setFormError("");
@@ -338,7 +480,7 @@ export default function RevenusPage() {
               <td className="px-5 py-4 text-xs font-semibold text-emerald-700">{money(paidAmount)}</td>
               <td className="px-5 py-4 text-xs font-semibold text-orange-700">{money(remaining)}</td>
               <td className="px-5 py-4"><span className={`inline-flex rounded-full px-2.5 py-1.5 text-[10px] font-semibold ${statusClass(invoice.status)}`}>{invoice.status}</span></td>
-              <td className="px-5 py-4">{!["Payée", "Annulée", "Brouillon"].includes(invoice.status) && remaining > 0 && <button onClick={() => openPayment(invoice)} className="whitespace-nowrap rounded-lg bg-violet-600 px-3 py-2 text-[10px] font-semibold text-white hover:bg-violet-700">+ Paiement</button>}</td>
+              <td className="px-5 py-4"><div className="flex flex-wrap gap-2"><button onClick={() => void downloadInvoicePdf(invoice)} className="whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-semibold text-slate-700 hover:border-violet-300">↓ PDF</button>{!["Payée", "Annulée", "Brouillon"].includes(invoice.status) && remaining > 0 && <button onClick={() => openPayment(invoice)} className="whitespace-nowrap rounded-lg bg-violet-600 px-3 py-2 text-[10px] font-semibold text-white hover:bg-violet-700">+ Paiement</button>}</div></td>
             </tr>;
           })}
         </tbody>
