@@ -27,7 +27,7 @@ import {
   ArrowLeft,
   Save,
 } from "lucide-react";
-import { supabase } from "../../lib/supabase";
+import { createSupabaseBrowserClient } from "../../lib/supabase-browser";
 
 type ClientStatus = "Actif" | "Prospect" | "En attente";
 
@@ -99,6 +99,7 @@ function createForm(client?: Client): ClientForm {
 }
 
 export default function ClientsPage() {
+  const [supabase] = useState(() => createSupabaseBrowserClient());
   const [clients, setClients] = useState<Client[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("Tous");
@@ -252,9 +253,19 @@ export default function ClientsPage() {
 
         setNotice("Les modifications du client ont été enregistrées.");
       } else {
+        // Vérifie la session avant de créer un client et lie-le au compte connecté.
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
+
+        if (userError || !user) {
+          throw new Error("SESSION_REQUIRED");
+        }
+
         const { data, error: insertError } = await supabase
           .from("clients")
-          .insert(payload)
+          .insert({ ...payload, user_id: user.id })
           .select(
             "id, name, company, email, phone, status, amount, created_at"
           )
@@ -272,11 +283,15 @@ export default function ClientsPage() {
       setForm({ ...emptyForm });
     } catch (err) {
       console.error("Erreur d'enregistrement :", err);
-      setError(
-        editingClient
-          ? "La modification a échoué. Vérifie les autorisations Supabase."
-          : "L'enregistrement a échoué. Vérifie les autorisations Supabase."
-      );
+      if (err instanceof Error && err.message === "SESSION_REQUIRED") {
+        setError("Ta session a expiré. Reconnecte-toi avant d'enregistrer un client.");
+      } else {
+        setError(
+          editingClient
+            ? "La modification a échoué. Vérifie les autorisations Supabase."
+            : "L'enregistrement a échoué. Vérifie les autorisations Supabase."
+        );
+      }
     } finally {
       setSaving(false);
     }
