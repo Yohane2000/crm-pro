@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { supabase } from "../lib/supabase";
+import { createSupabaseBrowserClient } from "../lib/supabase-browser";
 
 type ClientStatus = "Actif" | "Prospect" | "En attente";
 
@@ -82,6 +82,7 @@ function formatAmount(amount: number) {
 }
 
 export default function Home() {
+  const [supabase] = useState(() => createSupabaseBrowserClient());
   const [clients, setClients] = useState<Client[]>([]);
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
@@ -188,6 +189,22 @@ export default function Home() {
 
     setSaving(true);
 
+    // Vérifie que l'utilisateur est bien connecté avant l'insertion.
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      console.error("Session Supabase introuvable :", userError);
+      setFormError(
+        "Ta session a expiré. Reconnecte-toi avant de créer un client."
+      );
+      setSaving(false);
+      return;
+    }
+
+    // Associe le client à l'utilisateur connecté pour respecter la RLS.
     const { error } = await supabase.from("clients").insert({
       name: trimmedName,
       company: trimmedCompany,
@@ -195,13 +212,12 @@ export default function Home() {
       phone: null,
       status: "Prospect",
       amount: 0,
+      user_id: user.id,
     });
 
     if (error) {
       console.error("Erreur lors de l'ajout du client :", error);
-      setFormError(
-        "Impossible d'enregistrer ce client. Vérifie les autorisations Supabase."
-      );
+      setFormError(`Impossible d'enregistrer le client : ${error.message}`);
       setSaving(false);
       return;
     }
