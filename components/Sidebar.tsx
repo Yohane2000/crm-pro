@@ -33,9 +33,9 @@ role?: string | null;
 export default function Sidebar() {
 const pathname = usePathname();
 const router = useRouter();
-const [supabase] = useState(() => createSupabaseBrowserClient());
 
-const [userName, setUserName] = useState("Utilisateur");
+const [supabase] = useState(() => createSupabaseBrowserClient());
+const [userName, setUserName] = useState("Chargement...");
 const [userRole, setUserRole] = useState("Membre");
 const [initials, setInitials] = useState("U");
 
@@ -43,63 +43,74 @@ useEffect(() => {
 let active = true;
 
 async function loadUser() {
-  const { data, error } = await supabase.auth.getUser();
+  try {
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser();
 
-  if (!active || error || !data.user) {
-    if (active) {
+    if (!active) return;
+
+    if (error || !user) {
       setUserName("Non connecté");
       setUserRole("Visiteur");
       setInitials("?");
+      return;
     }
-    return;
+
+    let name =
+      user.user_metadata?.full_name ||
+      user.user_metadata?.name ||
+      user.user_metadata?.display_name ||
+      user.email?.split("@")[0] ||
+      "Utilisateur";
+
+    let role =
+      user.app_metadata?.role ||
+      user.user_metadata?.role ||
+      "Membre";
+
+    // Le profil est facultatif : si la table n'existe pas
+    // ou si elle est inaccessible, les métadonnées restent utilisées.
+    try {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name, role")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      const profileData = profile as Profile | null;
+
+      if (profileData?.full_name) {
+        name = profileData.full_name;
+      }
+
+      if (profileData?.role) {
+        role = profileData.role;
+      }
+    } catch {
+      // On conserve les informations disponibles dans Auth.
+    }
+
+    if (!active) return;
+
+    setUserName(name);
+    setUserRole(role);
+
+    const parts = name.trim().split(/\s+/);
+    const avatarInitials =
+      parts.length > 1
+        ? `${parts[0][0]}${parts[parts.length - 1][0]}`
+        : parts[0]?.slice(0, 2) || "U";
+
+    setInitials(avatarInitials.toUpperCase());
+  } catch {
+    if (!active) return;
+
+    setUserName("Utilisateur");
+    setUserRole("Membre");
+    setInitials("U");
   }
-
-  const user = data.user;
-
-  // Les métadonnées peuvent contenir le nom et le rôle.
-  let name =
-    user.user_metadata?.full_name ||
-    user.user_metadata?.name ||
-    user.user_metadata?.display_name ||
-    user.email?.split("@")[0] ||
-    "Utilisateur";
-
-  let role =
-    user.user_metadata?.role ||
-    user.app_metadata?.role ||
-    "Membre";
-
-  // Si le projet possède une table "profiles", on essaie d'y lire
-  // le nom et le rôle. Si elle n'existe pas ou est inaccessible,
-  // les métadonnées Auth restent utilisées.
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("full_name, role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (!active) return;
-
-  const profileData = profile as Profile | null;
-
-  if (profileData?.full_name) {
-    name = profileData.full_name;
-  }
-
-  if (profileData?.role) {
-    role = profileData.role;
-  }
-
-  setUserName(name);
-  setUserRole(role);
-
-  const parts = name.trim().split(/\s+/);
-  const userInitials =
-    parts.length > 1
-      ? `${parts[0][0]}${parts[parts.length - 1][0]}`
-      : parts[0]?.slice(0, 2) || "U";
-
-  setInitials(userInitials.toUpperCase());
 }
 
 loadUser();
@@ -115,12 +126,19 @@ return () => {
   subscription.unsubscribe();
 };
 
-}, []);
+}, [supabase]);
 
 async function handleLogout() {
-await supabase.auth.signOut();
-router.push("/login");
+const { error } = await supabase.auth.signOut();
+
+if (error) {
+  console.error("Erreur de déconnexion :", error.message);
+  return;
+}
+
+router.replace("/login");
 router.refresh();
+
 }
 
 return ( <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-slate-200 bg-white p-5 md:flex"> <Link href="/" className="mb-9 flex items-center gap-3 px-1"> <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-violet-600 text-xl font-bold text-white shadow-lg shadow-violet-200">
@@ -153,7 +171,7 @@ N </div>
 
         <div className="space-y-1">
           {group.items.map((item) => {
-            const active =
+            const isActive =
               item.href === "/"
                 ? pathname === "/"
                 : pathname === item.href ||
@@ -163,9 +181,9 @@ N </div>
               <Link
                 key={item.href}
                 href={item.href}
-                aria-current={active ? "page" : undefined}
+                aria-current={isActive ? "page" : undefined}
                 className={`flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition ${
-                  active
+                  isActive
                     ? "bg-violet-50 font-semibold text-violet-700"
                     : "text-slate-500 hover:bg-slate-50 hover:text-violet-700"
                 }`}
