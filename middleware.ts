@@ -14,10 +14,12 @@ cookies: {
 getAll() {
 return request.cookies.getAll();
 },
-setAll(cookiesToSet) {
-cookiesToSet.forEach(({ name, value }) => {
-request.cookies.set(name, value);
-});
+
+
+    setAll(cookiesToSet) {
+      cookiesToSet.forEach(({ name, value }) => {
+        request.cookies.set(name, value);
+      });
 
       response = NextResponse.next({
         request,
@@ -30,31 +32,46 @@ request.cookies.set(name, value);
   },
 }
 
+
 );
 
 const {
 data: { user },
+error,
 } = await supabase.auth.getUser();
 
 const pathname = request.nextUrl.pathname;
 
-const protectedRoutes = ["/", "/clients"];
+const protectedRoutes = [
+"/",
+"/clients",
+"/prospects",
+"/revenus",
+"/activites",
+"/parametres",
+];
 
 const isProtectedRoute = protectedRoutes.some(
 (route) =>
 pathname === route || pathname.startsWith(`${route}/`)
 );
 
-if (isProtectedRoute && !user) {
+if (isProtectedRoute && (!user || error)) {
 const redirectUrl = request.nextUrl.clone();
+
+
 redirectUrl.pathname = "/login";
 redirectUrl.searchParams.set("next", pathname);
 
 return NextResponse.redirect(redirectUrl);
 
+
 }
 
-if (user && (pathname === "/login" || pathname === "/register")) {
+if (
+user &&
+(pathname === "/login" || pathname === "/register")
+) {
 return NextResponse.redirect(new URL("/", request.url));
 }
 
