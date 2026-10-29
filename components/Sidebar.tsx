@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { createSupabaseBrowserClient } from "../../lib/supabase-browser";
+import { createSupabaseBrowserClient } from "../lib/supabase-browser";
 
 const navigation = [
 {
@@ -32,6 +32,7 @@ role?: string | null;
 
 export default function Sidebar() {
 const pathname = usePathname();
+const router = useRouter();
 const [supabase] = useState(() => createSupabaseBrowserClient());
 
 const [userName, setUserName] = useState("Utilisateur");
