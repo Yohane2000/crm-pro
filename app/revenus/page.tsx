@@ -43,7 +43,7 @@ function statusClass(status: InvoiceStatus) {
 
 export default function RevenusPage() {
   const [supabase] = useState(() => createSupabaseBrowserClient());
-  const [, setOrganizationId] = useState<string | null>(null);
+  const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -92,11 +92,11 @@ export default function RevenusPage() {
       const [invoiceResult, clientResult, paymentResult, itemResult] = await Promise.all([
         supabase.from("invoices")
           .select("id,user_id,client_id,invoice_number,title,description,issue_date,due_date,total_amount,status,notes,created_at,clients(id,name,company,email),payments(amount)")
-          .eq("user_id", user.id).order("created_at", { ascending: false }),
-        supabase.from("clients").select("id,name,company,email").eq("user_id", user.id).order("name"),
+          .order("created_at", { ascending: false }),
+        supabase.from("clients").select("id,name,company,email").order("name"),
         supabase.from("payments")
           .select("id,invoice_id,amount,payment_date,payment_method,reference,notes,invoices(invoice_number,title)")
-          .eq("user_id", user.id).order("payment_date", { ascending: false }),
+          .order("payment_date", { ascending: false }),
         supabase.from("invoice_items").select("id,invoice_id,description,quantity,unit_price,total").order("created_at", { ascending: true }),
       ]);
       if (invoiceResult.error) throw invoiceResult.error;
@@ -164,6 +164,7 @@ export default function RevenusPage() {
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       if (authError) throw authError;
       if (!user) throw new Error("Session expirée. Reconnecte-toi.");
+      if (!organizationId) throw new Error("Aucune organisation associée à ton compte.");
       const { data: numberData, error: numberError } = await supabase.rpc("next_invoice_number");
       if (numberError) throw numberError;
       const invoiceNumber = invoiceForm.invoice_number.trim() || String(numberData);
@@ -171,7 +172,7 @@ export default function RevenusPage() {
       const taxNote = vatEnabled ? `TVA appliquée : ${Number(vatRate)}% (${Math.round(vatAmount)} FCFA). Sous-total : ${Math.round(subtotal)} FCFA.` : `Sous-total : ${Math.round(subtotal)} FCFA. TVA non appliquée.`;
       const notes = [invoiceForm.notes.trim(), taxNote].filter(Boolean).join("\n");
       const { data: created, error: invoiceError } = await supabase.from("invoices").insert({
-        user_id: user.id, client_id: invoiceForm.client_id, invoice_number: invoiceNumber,
+        user_id: user.id, organization_id: organizationId, client_id: invoiceForm.client_id, invoice_number: invoiceNumber,
         title: invoiceForm.title.trim(), description, issue_date: invoiceForm.issue_date,
         due_date: invoiceForm.due_date || null, total_amount: invoiceTotal, status: "Envoyée", notes,
       }).select("id").single();
@@ -179,12 +180,12 @@ export default function RevenusPage() {
       createdInvoiceId = created.id;
       // La colonne total est GENERATED ALWAYS : ne surtout pas l'inclure dans l'INSERT.
       const itemRows = items.map((item) => ({
-        invoice_id: createdInvoiceId!, description: item.description.trim(),
+        invoice_id: createdInvoiceId!, organization_id: organizationId, description: item.description.trim(),
         quantity: Number(item.quantity), unit_price: Number(item.unit_price),
       }));
       const { error: itemsError } = await supabase.from("invoice_items").insert(itemRows);
       if (itemsError) {
-        const { error: rollbackError } = await supabase.from("invoices").delete().eq("id", createdInvoiceId).eq("user_id", user.id);
+        const { error: rollbackError } = await supabase.from("invoices").delete().eq("id", createdInvoiceId);
         if (rollbackError) console.error("Nettoyage de la facture incomplète impossible :", rollbackError);
         throw itemsError;
       }
@@ -192,6 +193,7 @@ export default function RevenusPage() {
       try {
         const { error: activityError } = await supabase.from("activity_logs").insert({
           user_id: user.id,
+          organization_id: organizationId,
           action: "create",
           entity_type: "factures",
           entity_id: createdInvoiceId,
@@ -234,8 +236,9 @@ export default function RevenusPage() {
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       if (authError) throw authError;
       if (!user) throw new Error("Session expirée. Reconnecte-toi.");
+      if (!organizationId) throw new Error("Aucune organisation associée à ton compte.");
       const { error: paymentInsertError } = await supabase.from("payments").insert({
-        user_id: user.id, invoice_id: paymentInvoice.id, amount,
+        user_id: user.id, organization_id: organizationId, invoice_id: paymentInvoice.id, amount,
         payment_date: paymentForm.payment_date, payment_method: paymentForm.payment_method,
         reference: paymentForm.reference.trim() || null, notes: paymentForm.notes.trim() || null,
       });
@@ -243,13 +246,14 @@ export default function RevenusPage() {
       const newPaid = paid(paymentInvoice) + amount;
       const nextStatus: InvoiceStatus = newPaid >= total ? "Payée" : "Partiellement payée";
       const { error: statusError } = await supabase.from("invoices").update({ status: nextStatus })
-        .eq("id", paymentInvoice.id).eq("user_id", user.id);
+        .eq("id", paymentInvoice.id);
       if (statusError) throw statusError;
 
       // Journaliser le paiement et le nouveau statut de la facture.
       try {
         const { error: activityError } = await supabase.from("activity_logs").insert({
           user_id: user.id,
+          organization_id: organizationId,
           action: "create",
           entity_type: "paiements",
           entity_id: paymentInvoice.id,
