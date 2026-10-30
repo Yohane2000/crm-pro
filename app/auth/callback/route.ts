@@ -2,40 +2,67 @@ import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "../../../lib/supabase-server";
 
 export async function GET(request: Request) {
-  const requestUrl = new URL(request.url);
-  const code = requestUrl.searchParams.get("code");
-  const origin = requestUrl.origin;
+const requestUrl = new URL(request.url);
+const code = requestUrl.searchParams.get("code");
+const tokenHash = requestUrl.searchParams.get("token_hash");
+const type = requestUrl.searchParams.get("type");
+const origin = requestUrl.origin;
 
-  if (code) {
-    const supabase = await createSupabaseServerClient();
+const supabase = await createSupabaseServerClient();
 
-    // 1. Échanger le code contre une session
-    const { error: authError } =
-      await supabase.auth.exchangeCodeForSession(code);
+let authError = null;
 
-    if (!authError) {
-      // 2. Vérifier et accepter une éventuelle invitation
-      const { error: invitationError } = await supabase.rpc(
-        "accept_organization_invitation"
-      );
+// Confirmation par code PKCE
+if (code) {
+const { error } = await supabase.auth.exchangeCodeForSession(code);
+authError = error;
+}
+// Confirmation par token_hash (invitation ou email)
+else if (tokenHash && type) {
+const { error } = await supabase.auth.verifyOtp({
+token_hash: tokenHash,
+type: type as
+| "signup"
+| "invite"
+| "magiclink"
+| "recovery"
+| "email"
+| "email_change",
+});
 
-      if (invitationError) {
-        console.error(
-          "Erreur lors de l'acceptation de l'invitation :",
-          invitationError
-        );
 
-        return NextResponse.redirect(
-          new URL("/login?error=invitation", origin)
-        );
-      }
+authError = error;
 
-      // 3. Rediriger l'utilisateur
-      return NextResponse.redirect(new URL("/", origin));
-    }
-  }
 
-  return NextResponse.redirect(
-    new URL("/login?error=confirmation", origin)
-  );
+} else {
+return NextResponse.redirect(
+new URL("/login?error=confirmation", origin)
+);
+}
+
+if (authError) {
+console.error("Erreur confirmation Supabase :", authError);
+
+
+return NextResponse.redirect(
+  new URL("/login?error=confirmation", origin)
+);
+
+}
+
+// Accepter une éventuelle invitation
+const { error: invitationError } = await supabase.rpc(
+"accept_organization_invitation"
+);
+
+if (invitationError) {
+console.error("Erreur acceptation invitation :", invitationError);
+
+return NextResponse.redirect(
+  new URL("/login?error=invitation", origin)
+);
+
+}
+
+return NextResponse.redirect(new URL("/", origin));
 }
