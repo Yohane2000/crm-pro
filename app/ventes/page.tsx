@@ -297,11 +297,18 @@ export default function VentesPage() {
       resetInvoiceForm();
       setNotice(`La facture ${invoiceNumber} a été créée avec succès.`);
       await loadData(true);
-    } catch (err) {
-      console.error("Erreur de création de facture :", err);
-      const message = err instanceof Error ? err.message : "Une erreur inconnue est survenue.";
-      setInvoiceError(`Impossible de créer la facture : ${message}`);
-    } finally {
+      
+    } catch (error: unknown) {
+  console.error("ERREUR CRÉATION FACTURE :", error);
+
+  if (error instanceof Error) {
+    alert(`Impossible de créer la facture : ${error.message}`);
+  } else {
+    alert(`Erreur inconnue : ${JSON.stringify(error)}`);
+  }
+}
+    
+    finally {
       setSavingInvoice(false);
     }
   };
