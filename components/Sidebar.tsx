@@ -13,6 +13,7 @@ items: [
 { label: "Clients", href: "/clients", icon: "♙" },
 { label: "Prospects", href: "/prospects", icon: "◎" },
 { label: "Ventes", href: "/ventes", icon: "↗" },
+{ label: "Revenus", href: "/revenus", icon: "↗♙" },
 { label: "Activités", href: "/activites", icon: "◷" },
 ],
 },
