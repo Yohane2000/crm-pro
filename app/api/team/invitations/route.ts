@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "../../../../lib/supabase-server";
 import { createSupabaseAdminClient } from "../../../../lib/supabase-admin";
 
+export const runtime = "nodejs";
+
 export async function POST(request: Request) {
+  let invitationId: string | null = null;
+  let supabaseAdmin: ReturnType<typeof createSupabaseAdminClient> | null =
+    null;
+
   try {
     // 1. Vérifier l'utilisateur connecté
     const supabase = await createSupabaseServerClient();
@@ -19,10 +25,23 @@ export async function POST(request: Request) {
       );
     }
 
-    // 2. Récupérer les informations de l'invitation
-    const body = await request.json();
+    // 2. Vérifier les données reçues
+    let body: { email?: unknown; role?: unknown };
 
-    const email = String(body.email || "").trim().toLowerCase();
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Données de requête invalides." },
+        { status: 400 }
+      );
+    }
+
+    const email =
+      typeof body.email === "string"
+        ? body.email.trim().toLowerCase()
+        : "";
+
     const role = body.role;
 
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -32,50 +51,70 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!["commercial", "comptable"].includes(role)) {
+    if (email.length > 254) {
+      return NextResponse.json(
+        { error: "Adresse email trop longue." },
+        { status: 400 }
+      );
+    }
+
+    if (role !== "commercial" && role !== "comptable") {
       return NextResponse.json(
         { error: "Rôle invalide." },
         { status: 400 }
       );
     }
 
-    if (email === user.email.toLowerCase()) {
+    if (email === user.email.trim().toLowerCase()) {
       return NextResponse.json(
         { error: "Vous ne pouvez pas vous inviter vous-même." },
         { status: 400 }
       );
     }
 
-    // 3. Initialiser le client administrateur côté serveur
-    const supabaseAdmin = createSupabaseAdminClient();
+    // 3. Initialiser le client administrateur
+    supabaseAdmin = createSupabaseAdminClient();
 
-    // 4. Vérifier que l'utilisateur est administrateur
+    // 4. Vérifier le rôle et l'organisation de l'administrateur
     const { data: membership, error: membershipError } =
       await supabaseAdmin
         .from("organization_members")
         .select("organization_id, role")
         .eq("user_id", user.id)
-        .single();
+        .maybeSingle();
 
-    if (
-      membershipError ||
-      !membership ||
-      membership.role !== "admin"
-    ) {
+    if (membershipError) {
+      throw membershipError;
+    }
+
+    if (!membership || membership.role !== "admin") {
       return NextResponse.json(
-        { error: "Seuls les administrateurs peuvent inviter." },
+        {
+          error: "Seuls les administrateurs peuvent inviter des collaborateurs.",
+        },
         { status: 403 }
       );
     }
 
-    // 5. Vérifier qu'une invitation n'est pas déjà en attente
+    // 5. Révoquer les anciennes invitations expirées
+    const { error: expirationError } = await supabaseAdmin
+      .from("organization_invitations")
+      .update({ status: "revoked" })
+      .eq("email", email)
+      .eq("status", "pending")
+      .lte("expires_at", new Date().toISOString());
+
+    if (expirationError) {
+      throw expirationError;
+    }
+
+    // 6. Vérifier les invitations déjà en attente
     const { data: existingInvitation, error: searchError } =
       await supabaseAdmin
         .from("organization_invitations")
         .select("id")
         .eq("email", email)
         .eq("status", "pending")
-        .gt("expires_at", new Date().toISOString())
         .maybeSingle();
 
     if (searchError) {
@@ -85,13 +124,17 @@ export async function POST(request: Request) {
     if (existingInvitation) {
       return NextResponse.json(
         {
-          error: "Une invitation est déjà en attente pour cet email.",
+          error: "Une invitation est déjà en attente pour cette adresse email.",
         },
         { status: 409 }
       );
     }
 
-    // 6. Créer l'invitation valable 72 heures
+    // 7. Créer une invitation valable 72 heures
+    const expiresAt = new Date(
+      Date.now() + 72 * 60 * 60 * 1000
+    ).toISOString();
+
     const { data: invitation, error: invitationError } =
       await supabaseAdmin
         .from("organization_invitations")
@@ -101,53 +144,100 @@ export async function POST(request: Request) {
           role,
           invited_by: user.id,
           status: "pending",
-          expires_at: new Date(
-            Date.now() + 72 * 60 * 60 * 1000
-          ).toISOString(),
+          expires_at: expiresAt,
         })
         .select("id")
         .single();
 
     if (invitationError) {
+      // Gestion d'une éventuelle requête concurrente
+      if (invitationError.code === "23505") {
+        return NextResponse.json(
+          {
+            error: "Une invitation est déjà en attente pour cette adresse email.",
+          },
+          { status: 409 }
+        );
+      }
+
       throw invitationError;
     }
 
-    // 7. Envoyer l'invitation avec Supabase Auth
+    invitationId = invitation.id;
+
+    // 8. Envoyer l'invitation avec Supabase Auth
     const origin = new URL(request.url).origin;
 
     const { error: emailError } =
       await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
         redirectTo: `${origin}/auth/callback`,
+        data: {
+          invited_organization: membership.organization_id,
+        },
       });
 
     if (emailError) {
-      // Supprimer l'invitation si l'envoi échoue
+      // Conserver une trace de l'échec sans laisser
+      // une invitation active dans la base
       await supabaseAdmin
         .from("organization_invitations")
-        .delete()
-        .eq("id", invitation.id);
+        .update({ status: "revoked" })
+        .eq("id", invitationId);
+
+      invitationId = null;
+
+      const message = emailError.message.toLowerCase();
+
+      if (
+        message.includes("already registered") ||
+        message.includes("already exists") ||
+        message.includes("already been registered")
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Cette adresse possède déjà un compte. Avec l'architecture actuelle, un utilisateur ne peut appartenir qu'à une seule organisation.",
+          },
+          { status: 409 }
+        );
+      }
+
+      console.error("Erreur envoi email Supabase :", emailError);
 
       return NextResponse.json(
-        { error: emailError.message },
+        {
+          error:
+            "Supabase n'a pas pu envoyer l'invitation. Vérifie la configuration de ton service email.",
+        },
         { status: 400 }
       );
     }
 
-    // 8. Confirmer l'envoi
+    // 9. Confirmer l'envoi
     return NextResponse.json(
       {
         success: true,
         message: "Invitation envoyée avec succès.",
+        expires_at: expiresAt,
       },
       { status: 201 }
     );
 
   } catch (error) {
-    console.error("Erreur invitation :", error);
+    console.error("Erreur API invitation :", error);
+
+    // Nettoyage de sécurité si une erreur survient
+    // après la création de l'invitation
+    if (invitationId && supabaseAdmin) {
+      await supabaseAdmin
+        .from("organization_invitations")
+        .update({ status: "revoked" })
+        .eq("id", invitationId);
+    }
 
     return NextResponse.json(
       {
-        error: "Une erreur est survenue lors de l'invitation.",
+        error: "Une erreur est survenue lors de l'envoi de l'invitation.",
       },
       { status: 500 }
     );
