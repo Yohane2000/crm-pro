@@ -139,6 +139,28 @@ export default function ClientsPage() {
     void loadClients();
   }, [loadClients]);
 
+  // Enregistre une activité sans bloquer l'opération principale si le journal échoue.
+  async function logClientActivity(
+    userId: string,
+    action: "create" | "update" | "delete",
+    clientId: string,
+    description: string,
+    metadata: Record<string, unknown>
+  ) {
+    const { error: activityError } = await supabase.from("activity_logs").insert({
+      user_id: userId,
+      action,
+      entity_type: "clients",
+      entity_id: clientId,
+      description,
+      metadata,
+    });
+
+    if (activityError) {
+      console.error("Enregistrement de l'activité impossible :", activityError);
+    }
+  }
+
   const filteredClients = useMemo(() => {
     const query = search.trim().toLowerCase();
 
@@ -251,6 +273,17 @@ export default function ClientsPage() {
           )
         );
 
+        const { data: { user: activityUser } } = await supabase.auth.getUser();
+        if (activityUser) {
+          await logClientActivity(
+            activityUser.id,
+            "update",
+            editingClient.id,
+            `Fiche client modifiée : ${name} (${company})`,
+            { client_name: name, company, status: form.status }
+          );
+        }
+
         setNotice("Les modifications du client ont été enregistrées.");
       } else {
         // Vérifie la session avant de créer un client.
@@ -275,6 +308,14 @@ export default function ClientsPage() {
         if (insertError) throw insertError;
 
         setClients((current) => [data as Client, ...current]);
+
+        await logClientActivity(
+          user.id,
+          "create",
+          (data as Client).id,
+          `Nouveau client créé : ${name} (${company})`,
+          { client_name: name, company, email, status: form.status }
+        );
 
         setNotice("Le nouveau client a été enregistré.");
       }
@@ -326,6 +367,17 @@ export default function ClientsPage() {
         .eq("id", client.id);
 
       if (deleteError) throw deleteError;
+
+      const { data: { user: activityUser } } = await supabase.auth.getUser();
+      if (activityUser) {
+        await logClientActivity(
+          activityUser.id,
+          "delete",
+          client.id,
+          `Client supprimé : ${client.name} (${client.company})`,
+          { client_name: client.name, company: client.company }
+        );
+      }
 
       setClients((current) =>
         current.filter((item) => item.id !== client.id)
@@ -397,7 +449,7 @@ export default function ClientsPage() {
             { href: "/clients", label: "Clients" },
             { href: "/prospects", label: "Prospects" },
             { href: "/revenus", label: "Revenus" },
-            { href: "/activites", label: "Activités" },
+            { href: "/activite", label: "Activité" },
           ].map((item) => {
             const active = item.href === "/clients";
 
