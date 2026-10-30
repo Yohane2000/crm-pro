@@ -85,13 +85,46 @@ const normalizeStatus = (status: string | null) =>
 
 function getStatus(invoice: Invoice, paid: number): string {
   const raw = normalizeStatus(invoice.status);
-  if (["paid", "paye", "payee", "reglee", "regle", "complete", "completed"].includes(raw)) return "paid";
-  if (["cancelled", "canceled", "annule", "annulee", "void", "deleted"].includes(raw)) return "cancelled";
   const total = Number(invoice.total_amount ?? 0);
-  if (total > 0 && paid >= total) return "paid";
-  if (paid > 0 && paid < total) return "partial";
-  if (["draft", "brouillon"].includes(raw)) return "draft";
-  if (invoice.due_date && invoice.due_date < todayLocal()) return "overdue";
+
+  // Facture annulée
+  if (["annulee", "annule", "cancelled", "canceled"].includes(raw)) {
+    return "cancelled";
+  }
+
+  // Facture réglée
+  if (total > 0 && paid >= total) {
+    return "paid";
+  }
+
+  if (["payee", "paye"].includes(raw)) {
+    return "paid";
+  }
+
+  // Paiement partiel
+  if (paid > 0 && paid < total) {
+    return "partial";
+  }
+
+  if (raw === "partiellement payee") {
+    return "partial";
+  }
+
+  // Facture en retard
+  if (
+    invoice.due_date &&
+    invoice.due_date < todayLocal() &&
+    total > paid
+  ) {
+    return "overdue";
+  }
+
+  // Brouillon
+  if (raw === "brouillon") {
+    return "draft";
+  }
+
+  // Facture envoyée
   return "pending";
 }
 
