@@ -56,6 +56,7 @@ function getErrorMessage(error: unknown) {
 
 export default function ProspectsPage() {
   const [supabase] = useState(() => createSupabaseBrowserClient());
+  const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [prospects, setProspects] = useState<Prospect[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("Tous");
@@ -74,9 +75,23 @@ export default function ProspectsPage() {
     try {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError || !user) throw new Error("SESSION_REQUIRED");
+
+      const { data: membership, error: membershipError } = await supabase
+        .from("organization_members")
+        .select("organization_id")
+        .eq("user_id", user.id)
+        .single();
+
+      if (membershipError) throw membershipError;
+      if (!membership?.organization_id) {
+        throw new Error("Aucune organisation associée à ton compte.");
+      }
+
+      setOrganizationId(membership.organization_id);
+
       const { data, error: queryError } = await supabase.from("prospects")
         .select("id, user_id, name, company, email, phone, status, source, notes, estimated_amount, created_at, updated_at")
-        .eq("user_id", user.id).order("created_at", { ascending: false });
+        .order("created_at", { ascending: false });
       if (queryError) throw queryError;
       setProspects((data ?? []) as Prospect[]);
     } catch (err) {
@@ -90,6 +105,7 @@ export default function ProspectsPage() {
   // Journalise les actions du module Prospects sans bloquer l'opération principale.
   async function logProspectActivity(
     userId: string,
+    targetOrganizationId: string,
     action: "create" | "update" | "delete" | "convert",
     prospectId: string,
     description: string,
@@ -97,6 +113,7 @@ export default function ProspectsPage() {
   ) {
     const { error: activityError } = await supabase.from("activity_logs").insert({
       user_id: userId,
+      organization_id: targetOrganizationId,
       action,
       entity_type: "prospects",
       entity_id: prospectId,
@@ -153,15 +170,17 @@ export default function ProspectsPage() {
     try {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError || !user) throw new Error("SESSION_REQUIRED");
+      if (!organizationId) throw new Error("Aucune organisation associée à ton compte.");
       if (editingProspect) {
         const { data, error: updateError } = await supabase.from("prospects").update(payload)
-          .eq("id", editingProspect.id).eq("user_id", user.id)
+          .eq("id", editingProspect.id)
           .select("id, user_id, name, company, email, phone, status, source, notes, estimated_amount, created_at, updated_at").single();
         if (updateError) throw updateError;
         setProspects((current) => current.map((item) => item.id === editingProspect.id ? data as Prospect : item));
 
         await logProspectActivity(
           user.id,
+          organizationId,
           "update",
           editingProspect.id,
           `Prospect modifié : ${name}${company ? ` (${company})` : ""}`,
@@ -170,13 +189,18 @@ export default function ProspectsPage() {
 
         setNotice("Les modifications du prospect ont été enregistrées.");
       } else {
-        const { data, error: insertError } = await supabase.from("prospects").insert({ ...payload, user_id: user.id })
+        const { data, error: insertError } = await supabase.from("prospects").insert({
+          ...payload,
+          user_id: user.id,
+          organization_id: organizationId,
+        })
           .select("id, user_id, name, company, email, phone, status, source, notes, estimated_amount, created_at, updated_at").single();
         if (insertError) throw insertError;
         setProspects((current) => [data as Prospect, ...current]);
 
         await logProspectActivity(
           user.id,
+          organizationId,
           "create",
           (data as Prospect).id,
           `Nouveau prospect créé : ${name}${company ? ` (${company})` : ""}`,
@@ -201,11 +225,13 @@ export default function ProspectsPage() {
     try {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError || !user) throw new Error("SESSION_REQUIRED");
+      if (!organizationId) throw new Error("Aucune organisation associée à ton compte.");
       const { error: conversionError } = await supabase.rpc("convert_prospect_to_client", { p_prospect_id: prospect.id });
       if (conversionError) throw conversionError;
 
       await logProspectActivity(
         user.id,
+        organizationId,
         "convert",
         prospect.id,
         `Prospect converti en client : ${prospect.name}${prospect.company ? ` (${prospect.company})` : ""}`,
@@ -228,11 +254,13 @@ export default function ProspectsPage() {
     try {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError || !user) throw new Error("SESSION_REQUIRED");
-      const { error: deleteError } = await supabase.from("prospects").delete().eq("id", prospect.id).eq("user_id", user.id);
+      if (!organizationId) throw new Error("Aucune organisation associée à ton compte.");
+      const { error: deleteError } = await supabase.from("prospects").delete().eq("id", prospect.id);
       if (deleteError) throw deleteError;
 
       await logProspectActivity(
         user.id,
+        organizationId,
         "delete",
         prospect.id,
         `Prospect supprimé : ${prospect.name}${prospect.company ? ` (${prospect.company})` : ""}`,
