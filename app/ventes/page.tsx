@@ -292,6 +292,32 @@ export default function VentesPage() {
         throw insertItemsError;
       }
 
+      // Enregistre la création de la vente dans le journal d'activité.
+      const selectedClient = clients.find((client) => client.id === clientId);
+      const clientName = selectedClient?.company?.trim() || selectedClient?.name?.trim() || "Client sans nom";
+
+      const { error: activityError } = await supabase.from("activity_logs").insert({
+        user_id: user.id,
+        action: "create",
+        entity_type: "ventes",
+        entity_id: createdInvoiceId,
+        description: `a créé la facture ${invoiceNumber} pour ${clientName}`,
+        metadata: {
+          invoice_number: invoiceNumber,
+          client_id: clientId,
+          client_name: clientName,
+          title: title.trim(),
+          total_amount: invoiceTotal,
+          issue_date: issueDate,
+          due_date: dueDate || null,
+        },
+      });
+
+      // Une erreur de journalisation ne doit pas annuler une facture correctement créée.
+      if (activityError) {
+        console.error("Enregistrement de l'activité impossible :", activityError);
+      }
+
       setShowInvoiceForm(false);
       resetInvoiceForm();
       setNotice(`La facture ${invoiceNumber} a été créée avec succès.`);
