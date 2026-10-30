@@ -281,7 +281,6 @@ export default function VentesPage() {
         description: item.description.trim(),
         quantity: Number(item.quantity),
         unit_price: Number(item.unit_price),
-        total: Number(item.quantity) * Number(item.unit_price),
       }));
 
       const { error: insertItemsError } = await supabase.from("invoice_items").insert(itemRows);
