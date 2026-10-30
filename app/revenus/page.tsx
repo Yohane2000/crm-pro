@@ -43,6 +43,7 @@ function statusClass(status: InvoiceStatus) {
 
 export default function RevenusPage() {
   const [supabase] = useState(() => createSupabaseBrowserClient());
+  const [, setOrganizationId] = useState<string | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -76,6 +77,18 @@ export default function RevenusPage() {
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       if (authError) throw authError;
       if (!user) throw new Error("Connecte-toi pour consulter tes factures et tes revenus.");
+      const { data: membership, error: membershipError } = await supabase
+        .from("organization_members")
+        .select("organization_id")
+        .eq("user_id", user.id)
+        .single();
+
+      if (membershipError) throw membershipError;
+      if (!membership?.organization_id) {
+        throw new Error("Aucune organisation associée à ton compte.");
+      }
+
+      setOrganizationId(membership.organization_id);
       const [invoiceResult, clientResult, paymentResult, itemResult] = await Promise.all([
         supabase.from("invoices")
           .select("id,user_id,client_id,invoice_number,title,description,issue_date,due_date,total_amount,status,notes,created_at,clients(id,name,company,email),payments(amount)")
