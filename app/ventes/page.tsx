@@ -153,15 +153,33 @@ export default function VentesPage() {
         return;
       }
 
+      // Récupère l'organisation du membre connecté.
+      const { data: membership, error: membershipError } = await supabase
+        .from("organization_members")
+        .select("organization_id")
+        .eq("user_id", user.id)
+        .single();
+
+      if (membershipError) throw membershipError;
+      if (!membership?.organization_id) {
+        throw new Error("Aucune organisation n'est associée à ce compte.");
+      }
+
+      const organizationId = membership.organization_id;
+
+      // Les politiques RLS limitent déjà les résultats à l'organisation.
+      // Le filtre explicite évite de charger des données hors périmètre.
       const [invoiceResult, paymentResult, clientResult] = await Promise.all([
         supabase.from("invoices")
-          .select("id,user_id,client_id,invoice_number,title,issue_date,due_date,total_amount,status,created_at")
-          .eq("user_id", user.id).order("created_at", { ascending: false }),
+          .select("id,user_id,client_id,invoice_number,title,issue_date,due_date,total_amount,status,created_at,organization_id")
+          .eq("organization_id", organizationId)
+          .order("created_at", { ascending: false }),
         supabase.from("payments")
-          .select("id,user_id,invoice_id,amount,payment_date,payment_method,reference")
-          .eq("user_id", user.id),
+          .select("id,user_id,invoice_id,amount,payment_date,payment_method,reference,organization_id")
+          .eq("organization_id", organizationId),
         supabase.from("clients")
-          .select("id,name,company,email").eq("user_id", user.id),
+          .select("id,name,company,email,organization_id")
+          .eq("organization_id", organizationId),
       ]);
 
       if (invoiceResult.error) throw invoiceResult.error;
@@ -253,13 +271,32 @@ export default function VentesPage() {
       if (authError) throw authError;
       if (!user) throw new Error("Session expirée. Reconnecte-toi.");
 
-      // Référence lisible et pratiquement unique ; la contrainte UNIQUE en base reste recommandée.
-      const invoiceNumber = `FAC-${issueDate.replaceAll("-", "")}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
+      const { data: membership, error: membershipError } = await supabase
+        .from("organization_members")
+        .select("organization_id")
+        .eq("user_id", user.id)
+        .single();
+
+      if (membershipError) throw membershipError;
+      if (!membership?.organization_id) {
+        throw new Error("Aucune organisation n'est associée à ce compte.");
+      }
+
+      const organizationId = membership.organization_id;
+
+      // Utilise la séquence atomique commune à toute l'organisation.
+      const { data: invoiceNumber, error: numberError } = await supabase
+        .rpc("next_invoice_number");
+
+      if (numberError) throw numberError;
+      if (!invoiceNumber) throw new Error("Impossible de générer le numéro de facture.");
+
       const fullDescription = description.trim() || items.map((item) => item.description.trim()).join(" • ");
       const { data: invoice, error: insertInvoiceError } = await supabase
         .from("invoices")
         .insert({
           user_id: user.id,
+          organization_id: organizationId,
           client_id: clientId,
           invoice_number: invoiceNumber,
           title: title.trim(),
@@ -278,6 +315,7 @@ export default function VentesPage() {
 
       const itemRows = items.map((item) => ({
         invoice_id: createdInvoiceId,
+        organization_id: organizationId,
         description: item.description.trim(),
         quantity: Number(item.quantity),
         unit_price: Number(item.unit_price),
@@ -298,6 +336,7 @@ export default function VentesPage() {
 
       const { error: activityError } = await supabase.from("activity_logs").insert({
         user_id: user.id,
+        organization_id: organizationId,
         action: "create",
         entity_type: "ventes",
         entity_id: createdInvoiceId,
