@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createSupabaseBrowserClient } from "../../../../lib/supabase-browser";
+import { createSupabaseBrowserClient } from "../../../lib/supabase-browser";
 import { LockKeyhole, Eye, EyeOff, Loader2 } from "lucide-react";
 
 export default function UpdatePasswordPage() {
