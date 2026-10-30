@@ -175,6 +175,26 @@ export default function RevenusPage() {
         if (rollbackError) console.error("Nettoyage de la facture incomplète impossible :", rollbackError);
         throw itemsError;
       }
+      // Journaliser la création sans bloquer la facture si le journal rencontre un problème.
+      try {
+        const { error: activityError } = await supabase.from("activity_logs").insert({
+          user_id: user.id,
+          action: "create",
+          entity_type: "factures",
+          entity_id: createdInvoiceId,
+          description: `Facture ${invoiceNumber} créée pour ${clients.find((client) => client.id === invoiceForm.client_id)?.company?.trim() || clients.find((client) => client.id === invoiceForm.client_id)?.name || "un client"} — ${money(invoiceTotal)}.`,
+          metadata: {
+            invoice_number: invoiceNumber,
+            client_id: invoiceForm.client_id,
+            title: invoiceForm.title.trim(),
+            total_amount: invoiceTotal,
+          },
+        });
+        if (activityError) console.error("Journalisation de la création de facture impossible :", activityError);
+      } catch (activityError) {
+        console.error("Journalisation de la création de facture impossible :", activityError);
+      }
+
       setShowInvoiceForm(false); resetInvoiceForm(); setMessage(`La facture ${invoiceNumber} a été créée avec succès.`);
       await loadData();
     } catch (err) {
@@ -212,6 +232,30 @@ export default function RevenusPage() {
       const { error: statusError } = await supabase.from("invoices").update({ status: nextStatus })
         .eq("id", paymentInvoice.id).eq("user_id", user.id);
       if (statusError) throw statusError;
+
+      // Journaliser le paiement et le nouveau statut de la facture.
+      try {
+        const { error: activityError } = await supabase.from("activity_logs").insert({
+          user_id: user.id,
+          action: "create",
+          entity_type: "paiements",
+          entity_id: paymentInvoice.id,
+          description: `Paiement de ${money(amount)} enregistré pour la facture ${paymentInvoice.invoice_number} (${paymentForm.payment_method}). Nouveau statut : ${nextStatus}.`,
+          metadata: {
+            invoice_id: paymentInvoice.id,
+            invoice_number: paymentInvoice.invoice_number,
+            amount,
+            payment_date: paymentForm.payment_date,
+            payment_method: paymentForm.payment_method,
+            reference: paymentForm.reference.trim() || null,
+            invoice_status: nextStatus,
+          },
+        });
+        if (activityError) console.error("Journalisation du paiement impossible :", activityError);
+      } catch (activityError) {
+        console.error("Journalisation du paiement impossible :", activityError);
+      }
+
       setPaymentInvoice(null); setMessage(`Paiement de ${money(amount)} enregistré. Statut : ${nextStatus}.`);
       await loadData();
     } catch (err) {
