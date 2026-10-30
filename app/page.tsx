@@ -11,6 +11,7 @@ import {
 
 import {
   Activity,
+  AlertCircle,
   ArrowDownRight,
   ArrowUpRight,
   Banknote,
@@ -75,6 +76,8 @@ type Payment = {
   amount: number | string;
   payment_date: string;
   payment_method: string | null;
+  reference: string | null;
+  notes: string | null;
   created_at: string;
 };
 
@@ -136,7 +139,9 @@ function dateLabel(value: string) {
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) return "Date inconnue";
+  if (Number.isNaN(date.getTime())) {
+    return "Date inconnue";
+  }
 
   return new Intl.DateTimeFormat("fr-FR", {
     day: "2-digit",
@@ -245,7 +250,7 @@ export default function Home() {
       supabase
         .from("payments")
         .select(
-          "id,invoice_id,amount,payment_date,payment_method,created_at"
+          "id,invoice_id,amount,payment_date,payment_method,reference,notes,created_at"
         )
         .eq("user_id", user.id)
         .order("created_at", { ascending: false }),
@@ -280,7 +285,7 @@ export default function Home() {
       );
 
       setFinancialError(
-        "Les données financières ne sont pas disponibles. Vérifie les tables invoices et payments ainsi que leurs politiques RLS."
+        "Les données financières sont indisponibles. Vérifie les tables invoices et payments ainsi que leurs politiques RLS."
       );
 
       setInvoices([]);
@@ -335,6 +340,20 @@ export default function Home() {
     : 0;
 
   // --------------------------------------------------
+  // PAIEMENTS PAR FACTURE
+  // --------------------------------------------------
+
+  const paymentByInvoice = payments.reduce<
+    Record<string, number>
+  >((acc, payment) => {
+    acc[payment.invoice_id] =
+      (acc[payment.invoice_id] || 0) +
+      (Number(payment.amount) || 0);
+
+    return acc;
+  }, {});
+
+  // --------------------------------------------------
   // STATISTIQUES FINANCIÈRES
   // --------------------------------------------------
 
@@ -350,22 +369,10 @@ export default function Home() {
     0
   );
 
-  const paymentByInvoice = payments.reduce<
-    Record<string, number>
-  >((acc, payment) => {
-    acc[payment.invoice_id] =
-      (acc[payment.invoice_id] || 0) +
-      (Number(payment.amount) || 0);
-
-    return acc;
-  }, {});
-
   const totalOutstanding = invoices.reduce(
     (sum, invoice) => {
       const total = Number(invoice.total_amount) || 0;
-
-      const paid =
-        paymentByInvoice[invoice.id] || 0;
+      const paid = paymentByInvoice[invoice.id] || 0;
 
       return sum + Math.max(total - paid, 0);
     },
@@ -380,6 +387,81 @@ export default function Home() {
       (paymentByInvoice[invoice.id] || 0) >= total
     );
   }).length;
+
+  // --------------------------------------------------
+  // ÉTAT DES FACTURES
+  // --------------------------------------------------
+
+  const invoiceDetails = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    return invoices.map((invoice) => {
+      const total = Number(invoice.total_amount) || 0;
+
+      const paid =
+        paymentByInvoice[invoice.id] || 0;
+
+      const remaining = Math.max(total - paid, 0);
+
+      const dueDate = invoice.due_date
+        ? new Date(`${invoice.due_date}T00:00:00`)
+        : null;
+
+      const overdue =
+        remaining > 0 &&
+        dueDate !== null &&
+        !Number.isNaN(dueDate.getTime()) &&
+        dueDate < today;
+
+      let paymentStatus = "En attente";
+
+      if (total > 0 && remaining === 0) {
+        paymentStatus = "Réglée";
+      } else if (paid > 0) {
+        paymentStatus = "Partiellement réglée";
+      } else if (overdue) {
+        paymentStatus = "En retard";
+      }
+
+      return {
+        ...invoice,
+        total,
+        paid,
+        remaining,
+        overdue,
+        paymentStatus,
+      };
+    });
+  }, [invoices, paymentByInvoice]);
+
+  const invoicesToWatch = invoiceDetails
+    .filter((invoice) => invoice.remaining > 0)
+    .sort((a, b) => {
+      if (a.overdue !== b.overdue) {
+        return a.overdue ? -1 : 1;
+      }
+
+      return a.remaining - b.remaining;
+    })
+    .slice(0, 6);
+
+  const overdueCount = invoiceDetails.filter(
+    (invoice) => invoice.overdue
+  ).length;
+
+  const partialCount = invoiceDetails.filter(
+    (invoice) =>
+      invoice.paid > 0 &&
+      invoice.remaining > 0
+  ).length;
+
+  const pendingCount = invoiceDetails.filter(
+    (invoice) =>
+      invoice.paid === 0 &&
+      invoice.remaining > 0 &&
+      !invoice.overdue
+  ).length;
 
   // --------------------------------------------------
   // GRAPHIQUE DES ENCAISSEMENTS
@@ -413,15 +495,21 @@ export default function Home() {
   );
 
   // --------------------------------------------------
-  // DERNIÈRES FACTURES
+  // DERNIÈRES TRANSACTIONS
   // --------------------------------------------------
 
-  const recentInvoices = invoices.slice(0, 5);
+  const recentPayments = payments.slice(0, 6);
 
   const getClientName = (clientId: string) => {
     return (
       clients.find((client) => client.id === clientId)?.name ||
       "Client inconnu"
+    );
+  };
+
+  const getInvoice = (invoiceId: string) => {
+    return invoices.find(
+      (invoice) => invoice.id === invoiceId
     );
   };
 
@@ -523,7 +611,7 @@ export default function Home() {
     {
       title: "Reste à percevoir",
       value: money(totalOutstanding),
-      note: "Solde calculé des factures",
+      note: "Solde des factures",
       icon: Banknote,
       color: "orange",
     },
@@ -618,7 +706,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* STATISTIQUES FINANCIÈRES */}
+      {/* STATISTIQUES */}
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
 
@@ -664,11 +752,9 @@ export default function Home() {
 
       </section>
 
-      {/* GRAPHIQUES ET PROSPECTS */}
+      {/* GRAPHIQUE ET PERFORMANCE */}
 
       <section className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-
-        {/* ENCAISSEMENTS */}
 
         <article className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm xl:col-span-2">
 
@@ -685,10 +771,7 @@ export default function Home() {
             </div>
 
             <div className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700">
-              <TrendingUp
-                size={14}
-                className="mr-1 inline"
-              />
+              <TrendingUp size={14} className="mr-1 inline" />
               {money(totalPaid)}
             </div>
 
@@ -703,9 +786,7 @@ export default function Home() {
               >
 
                 <span className="text-[9px] font-semibold text-slate-500">
-                  {item.value > 0
-                    ? shortMoney(item.value)
-                    : ""}
+                  {item.value > 0 ? shortMoney(item.value) : ""}
                 </span>
 
                 <div className="flex h-36 w-full items-end justify-center">
@@ -746,8 +827,6 @@ export default function Home() {
 
         </article>
 
-        {/* PROSPECTS */}
-
         <article className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
 
           <div className="flex items-center justify-between">
@@ -777,12 +856,10 @@ export default function Home() {
             </p>
 
             <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/20">
-
               <div
                 style={{ width: `${conversion}%` }}
                 className="h-full rounded-full bg-white transition-all"
               />
-
             </div>
 
             <p className="mt-3 text-[10px] text-violet-100">
@@ -837,27 +914,31 @@ export default function Home() {
 
       </section>
 
-      {/* FACTURES RÉCENTES */}
+      {/* DERNIÈRES TRANSACTIONS */}
 
       <section className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
 
         <div className="flex flex-col justify-between gap-3 border-b border-slate-100 p-5 sm:flex-row sm:items-center md:p-6">
 
           <div>
-            <h2 className="font-bold text-slate-900">
-              Dernières factures
-            </h2>
+            <div className="flex items-center gap-2">
+              <Wallet size={19} className="text-emerald-600" />
+
+              <h2 className="font-bold text-slate-900">
+                Dernières transactions
+              </h2>
+            </div>
 
             <p className="mt-1 text-xs text-slate-400">
-              Suivi des opérations de facturation
+              Historique des paiements reçus.
             </p>
           </div>
 
           <Link
-            href="/ventes"
+            href="/revenus"
             className="flex items-center gap-2 rounded-lg bg-violet-50 px-4 py-2.5 text-xs font-semibold text-violet-700 transition hover:bg-violet-100"
           >
-            Voir les ventes
+            Voir les revenus
             <ChevronRight size={15} />
           </Link>
 
@@ -870,25 +951,11 @@ export default function Home() {
             <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-400">
 
               <tr>
-                <th className="px-6 py-4 font-semibold">
-                  Facture
-                </th>
-
-                <th className="px-6 py-4 font-semibold">
-                  Client
-                </th>
-
-                <th className="px-6 py-4 font-semibold">
-                  Date
-                </th>
-
-                <th className="px-6 py-4 font-semibold">
-                  Montant
-                </th>
-
-                <th className="px-6 py-4 font-semibold">
-                  Statut
-                </th>
+                <th className="px-6 py-4 font-semibold">Client</th>
+                <th className="px-6 py-4 font-semibold">Référence</th>
+                <th className="px-6 py-4 font-semibold">Date</th>
+                <th className="px-6 py-4 font-semibold">Moyen</th>
+                <th className="px-6 py-4 font-semibold">Montant</th>
               </tr>
 
             </thead>
@@ -897,33 +964,202 @@ export default function Home() {
 
               {loading ? (
                 <tr>
-                  <td
-                    colSpan={5}
-                    className="px-6 py-10 text-center text-sm text-slate-400"
-                  >
-                    Chargement des factures...
+                  <td colSpan={5} className="px-6 py-10 text-center text-sm text-slate-400">
+                    Chargement des transactions...
                   </td>
                 </tr>
-              ) : recentInvoices.length === 0 ? (
+              ) : recentPayments.length === 0 ? (
                 <tr>
-                  <td
-                    colSpan={5}
-                    className="px-6 py-10 text-center text-sm text-slate-400"
-                  >
-                    Aucune facture enregistrée.
+                  <td colSpan={5} className="px-6 py-10 text-center text-sm text-slate-400">
+                    Aucune transaction enregistrée.
                   </td>
                 </tr>
               ) : (
-                recentInvoices.map((invoice) => {
+                recentPayments.map((payment) => {
+                  const invoice = getInvoice(payment.invoice_id);
 
-                  const paid =
-                    paymentByInvoice[invoice.id] || 0;
+                  const clientName = invoice
+                    ? getClientName(invoice.client_id)
+                    : "Client inconnu";
 
-                  const total =
-                    Number(invoice.total_amount) || 0;
+                  return (
+                    <tr
+                      key={payment.id}
+                      className="border-t border-slate-100 transition hover:bg-emerald-50/30"
+                    >
 
-                  const settled =
-                    total > 0 && paid >= total;
+                      <td className="px-6 py-4">
+
+                        <div className="flex items-center gap-3">
+
+                          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+                            <Banknote size={17} />
+                          </div>
+
+                          <div>
+                            <p className="text-xs font-semibold text-slate-800">
+                              {clientName}
+                            </p>
+
+                            <p className="mt-1 text-[10px] text-slate-400">
+                              {invoice?.title || "Paiement enregistré"}
+                            </p>
+                          </div>
+
+                        </div>
+
+                      </td>
+
+                      <td className="px-6 py-4 text-xs font-semibold text-slate-600">
+                        {payment.reference || invoice?.invoice_number || "—"}
+                      </td>
+
+                      <td className="px-6 py-4 text-xs text-slate-500">
+                        {dateLabel(payment.payment_date)}
+                      </td>
+
+                      <td className="px-6 py-4 text-xs text-slate-500">
+                        {payment.payment_method || "Non renseigné"}
+                      </td>
+
+                      <td className="px-6 py-4 text-xs font-bold text-emerald-700">
+                        + {money(Number(payment.amount) || 0)}
+                      </td>
+
+                    </tr>
+                  );
+                })
+              )}
+
+            </tbody>
+
+          </table>
+
+        </div>
+
+        <div className="border-t border-slate-100 px-6 py-4 text-xs text-slate-400">
+          {loading ? "Chargement..." : `${recentPayments.length} transaction(s) affichée(s)`}
+        </div>
+
+      </section>
+
+      {/* FACTURES À SURVEILLER */}
+
+      <section className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+
+        <div className="flex flex-col justify-between gap-4 border-b border-slate-100 p-5 sm:flex-row sm:items-center md:p-6">
+
+          <div>
+            <div className="flex items-center gap-2">
+
+              <AlertCircle size={19} className="text-orange-500" />
+
+              <h2 className="font-bold text-slate-900">
+                Factures à surveiller
+              </h2>
+
+            </div>
+
+            <p className="mt-1 text-xs text-slate-400">
+              Factures présentant un solde restant.
+            </p>
+          </div>
+
+          <Link
+            href="/ventes"
+            className="flex items-center gap-2 rounded-lg bg-violet-50 px-4 py-2.5 text-xs font-semibold text-violet-700 transition hover:bg-violet-100"
+          >
+            Gérer les factures
+            <ChevronRight size={15} />
+          </Link>
+
+        </div>
+
+        {/* RÉSUMÉ */}
+
+        <div className="grid grid-cols-1 gap-3 border-b border-slate-100 p-5 sm:grid-cols-3">
+
+          <div className="rounded-xl bg-red-50 p-4">
+            <div className="flex items-center gap-2 text-red-600">
+              <AlertCircle size={16} />
+              <span className="text-xs font-semibold">
+                En retard
+              </span>
+            </div>
+
+            <p className="mt-2 text-2xl font-extrabold text-red-700">
+              {loading ? "..." : overdueCount}
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-orange-50 p-4">
+            <div className="flex items-center gap-2 text-orange-600">
+              <Clock3 size={16} />
+              <span className="text-xs font-semibold">
+                Paiements partiels
+              </span>
+            </div>
+
+            <p className="mt-2 text-2xl font-extrabold text-orange-700">
+              {loading ? "..." : partialCount}
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-amber-50 p-4">
+            <div className="flex items-center gap-2 text-amber-600">
+              <CalendarDays size={16} />
+              <span className="text-xs font-semibold">
+                En attente
+              </span>
+            </div>
+
+            <p className="mt-2 text-2xl font-extrabold text-amber-700">
+              {loading ? "..." : pendingCount}
+            </p>
+          </div>
+
+        </div>
+
+        {/* TABLEAU */}
+
+        <div className="overflow-x-auto">
+
+          <table className="w-full min-w-[750px] text-left">
+
+            <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-400">
+
+              <tr>
+                <th className="px-6 py-4 font-semibold">Facture</th>
+                <th className="px-6 py-4 font-semibold">Client</th>
+                <th className="px-6 py-4 font-semibold">Échéance</th>
+                <th className="px-6 py-4 font-semibold">Montant restant</th>
+                <th className="px-6 py-4 font-semibold">Situation</th>
+              </tr>
+
+            </thead>
+
+            <tbody>
+
+              {loading ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-10 text-center text-sm text-slate-400">
+                    Chargement des factures...
+                  </td>
+                </tr>
+              ) : invoicesToWatch.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-10 text-center text-sm text-slate-400">
+                    Aucune facture à surveiller. Toutes les factures sont réglées ou aucune facture n'est enregistrée.
+                  </td>
+                </tr>
+              ) : (
+                invoicesToWatch.map((invoice) => {
+
+                  const badge = invoice.overdue
+                    ? "bg-red-50 text-red-700"
+                    : invoice.paid > 0
+                      ? "bg-orange-50 text-orange-700"
+                      : "bg-amber-50 text-amber-700";
 
                   return (
                     <tr
@@ -940,7 +1176,7 @@ export default function Home() {
                           </div>
 
                           <div>
-                            <p className="text-xs font-bold text-slate-800">
+                            <p className="text-xs font-semibold text-slate-800">
                               {invoice.invoice_number}
                             </p>
 
@@ -958,29 +1194,19 @@ export default function Home() {
                       </td>
 
                       <td className="px-6 py-4 text-xs text-slate-500">
-                        {dateLabel(invoice.issue_date)}
+                        {invoice.due_date
+                          ? dateLabel(invoice.due_date)
+                          : "Non définie"}
                       </td>
 
                       <td className="px-6 py-4 text-xs font-bold text-slate-800">
-                        {money(total)}
+                        {money(invoice.remaining)}
                       </td>
 
                       <td className="px-6 py-4">
 
-                        <span
-                          className={`rounded-full px-3 py-1.5 text-[10px] font-semibold ${
-                            settled
-                              ? "bg-emerald-50 text-emerald-700"
-                              : paid > 0
-                                ? "bg-blue-50 text-blue-700"
-                                : "bg-orange-50 text-orange-700"
-                          }`}
-                        >
-                          {settled
-                            ? "Réglée"
-                            : paid > 0
-                              ? "Partiellement réglée"
-                              : invoice.status || "En attente"}
+                        <span className={`rounded-full px-3 py-1.5 text-[10px] font-semibold ${badge}`}>
+                          {invoice.paymentStatus}
                         </span>
 
                       </td>
@@ -996,14 +1222,8 @@ export default function Home() {
 
         </div>
 
-        <div className="flex justify-between border-t border-slate-100 px-6 py-4 text-xs text-slate-400">
-          <span>
-            {loading ? "Chargement..." : `${recentInvoices.length} facture(s) affichée(s)`}
-          </span>
-
-          <span className="font-semibold text-violet-600">
-            Nexora Signature
-          </span>
+        <div className="border-t border-slate-100 px-6 py-4 text-xs text-slate-400">
+          {loading ? "Chargement..." : `${invoicesToWatch.length} facture(s) affichée(s) sur ${invoiceDetails.filter((invoice) => invoice.remaining > 0).length} facture(s) avec solde restant`}
         </div>
 
       </section>
@@ -1020,7 +1240,7 @@ export default function Home() {
             </h2>
 
             <p className="mt-1 text-xs text-slate-400">
-              Derniers contacts enregistrés
+              Derniers contacts enregistrés.
             </p>
           </div>
 
@@ -1061,21 +1281,10 @@ export default function Home() {
             <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-400">
 
               <tr>
-                <th className="px-6 py-4 font-semibold">
-                  Client
-                </th>
-
-                <th className="px-6 py-4 font-semibold">
-                  Statut
-                </th>
-
-                <th className="px-6 py-4 font-semibold">
-                  Montant associé
-                </th>
-
-                <th className="px-6 py-4 font-semibold">
-                  E-mail
-                </th>
+                <th className="px-6 py-4 font-semibold">Client</th>
+                <th className="px-6 py-4 font-semibold">Statut</th>
+                <th className="px-6 py-4 font-semibold">Montant associé</th>
+                <th className="px-6 py-4 font-semibold">E-mail</th>
               </tr>
 
             </thead>
