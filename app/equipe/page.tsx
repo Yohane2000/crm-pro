@@ -101,14 +101,27 @@ export default function EquipePage() {
         }),
       });
 
-      const result = await response.json();
+  const responseText = await response.text();
 
-      if (!response.ok) {
-        throw new Error(
-          result.error || "Impossible d'envoyer l'invitation."
-        );
-      }
+let result: { error?: string } = {};
 
+try {
+  result = JSON.parse(responseText);
+} catch {
+  console.error("Réponse API non JSON :", responseText);
+}
+
+if (!response.ok) {
+  console.error("Erreur API invitation :", {
+    status: response.status,
+    result,
+  });
+
+  throw new Error(
+    result.error ||
+      `Erreur serveur (${response.status}). Consulte les logs.`
+  );
+}
       setNotice(`Invitation envoyée à ${inviteEmail.trim()}.`);
       setInviteEmail("");
       setInviteRole("commercial");
