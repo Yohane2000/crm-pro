@@ -100,6 +100,7 @@ function createForm(client?: Client): ClientForm {
 
 export default function ClientsPage() {
   const [supabase] = useState(() => createSupabaseBrowserClient());
+  const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("Tous");
@@ -117,6 +118,27 @@ export default function ClientsPage() {
     setError("");
 
     try {
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError) throw authError;
+      if (!user) throw new Error("Ta session a expiré. Reconnecte-toi.");
+
+      const { data: membership, error: membershipError } = await supabase
+        .from("organization_members")
+        .select("organization_id")
+        .eq("user_id", user.id)
+        .single();
+
+      if (membershipError) throw membershipError;
+      if (!membership?.organization_id) {
+        throw new Error("Aucune organisation associée à ton compte.");
+      }
+
+      setOrganizationId(membership.organization_id);
+
       const { data, error: queryError } = await supabase
         .from("clients")
         .select("id, name, company, email, phone, status, amount, created_at")
@@ -142,6 +164,7 @@ export default function ClientsPage() {
   // Enregistre une activité sans bloquer l'opération principale si le journal échoue.
   async function logClientActivity(
     userId: string,
+    targetOrganizationId: string,
     action: "create" | "update" | "delete",
     clientId: string,
     description: string,
@@ -149,6 +172,7 @@ export default function ClientsPage() {
   ) {
     const { error: activityError } = await supabase.from("activity_logs").insert({
       user_id: userId,
+      organization_id: targetOrganizationId,
       action,
       entity_type: "clients",
       entity_id: clientId,
@@ -275,8 +299,10 @@ export default function ClientsPage() {
 
         const { data: { user: activityUser } } = await supabase.auth.getUser();
         if (activityUser) {
+          if (!organizationId) throw new Error("Organisation introuvable.");
           await logClientActivity(
             activityUser.id,
+            organizationId,
             "update",
             editingClient.id,
             `Fiche client modifiée : ${name} (${company})`,
@@ -297,9 +323,17 @@ export default function ClientsPage() {
         }
 
         // Associe le nouveau client à l'utilisateur connecté.
+        if (!organizationId) {
+          throw new Error("Aucune organisation associée à ton compte.");
+        }
+
         const { data, error: insertError } = await supabase
           .from("clients")
-          .insert({ ...payload, user_id: user.id })
+          .insert({
+            ...payload,
+            user_id: user.id,
+            organization_id: organizationId,
+          })
           .select(
             "id, name, company, email, phone, status, amount, created_at"
           )
@@ -311,6 +345,7 @@ export default function ClientsPage() {
 
         await logClientActivity(
           user.id,
+          organizationId,
           "create",
           (data as Client).id,
           `Nouveau client créé : ${name} (${company})`,
@@ -370,8 +405,10 @@ export default function ClientsPage() {
 
       const { data: { user: activityUser } } = await supabase.auth.getUser();
       if (activityUser) {
+        if (!organizationId) throw new Error("Organisation introuvable.");
         await logClientActivity(
           activityUser.id,
+          organizationId,
           "delete",
           client.id,
           `Client supprimé : ${client.name} (${client.company})`,
