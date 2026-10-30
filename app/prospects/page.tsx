@@ -87,6 +87,28 @@ export default function ProspectsPage() {
 
   useEffect(() => { void loadProspects(); }, [loadProspects]);
 
+  // Journalise les actions du module Prospects sans bloquer l'opération principale.
+  async function logProspectActivity(
+    userId: string,
+    action: "create" | "update" | "delete" | "convert",
+    prospectId: string,
+    description: string,
+    metadata: Record<string, unknown>
+  ) {
+    const { error: activityError } = await supabase.from("activity_logs").insert({
+      user_id: userId,
+      action,
+      entity_type: "prospects",
+      entity_id: prospectId,
+      description,
+      metadata,
+    });
+
+    if (activityError) {
+      console.error("Enregistrement de l'activité prospect impossible :", activityError);
+    }
+  }
+
   const filteredProspects = useMemo(() => {
     const query = search.trim().toLowerCase();
     return prospects.filter((p) => [p.name, p.company ?? "", p.email ?? "", p.phone ?? "", p.source ?? ""].join(" ").toLowerCase().includes(query)
@@ -137,12 +159,30 @@ export default function ProspectsPage() {
           .select("id, user_id, name, company, email, phone, status, source, notes, estimated_amount, created_at, updated_at").single();
         if (updateError) throw updateError;
         setProspects((current) => current.map((item) => item.id === editingProspect.id ? data as Prospect : item));
+
+        await logProspectActivity(
+          user.id,
+          "update",
+          editingProspect.id,
+          `Prospect modifié : ${name}${company ? ` (${company})` : ""}`,
+          { prospect_name: name, company, status: form.status, estimated_amount: estimatedAmount }
+        );
+
         setNotice("Les modifications du prospect ont été enregistrées.");
       } else {
         const { data, error: insertError } = await supabase.from("prospects").insert({ ...payload, user_id: user.id })
           .select("id, user_id, name, company, email, phone, status, source, notes, estimated_amount, created_at, updated_at").single();
         if (insertError) throw insertError;
         setProspects((current) => [data as Prospect, ...current]);
+
+        await logProspectActivity(
+          user.id,
+          "create",
+          (data as Prospect).id,
+          `Nouveau prospect créé : ${name}${company ? ` (${company})` : ""}`,
+          { prospect_name: name, company, email, source, status: form.status, estimated_amount: estimatedAmount }
+        );
+
         setNotice("Le nouveau prospect a été enregistré.");
       }
       setShowForm(false); setEditingProspect(null); setForm({ ...emptyForm });
@@ -163,6 +203,15 @@ export default function ProspectsPage() {
       if (userError || !user) throw new Error("SESSION_REQUIRED");
       const { error: conversionError } = await supabase.rpc("convert_prospect_to_client", { p_prospect_id: prospect.id });
       if (conversionError) throw conversionError;
+
+      await logProspectActivity(
+        user.id,
+        "convert",
+        prospect.id,
+        `Prospect converti en client : ${prospect.name}${prospect.company ? ` (${prospect.company})` : ""}`,
+        { prospect_name: prospect.name, company: prospect.company, previous_status: prospect.status, new_status: "Converti" }
+      );
+
       setProspects((current) => current.map((item) => item.id === prospect.id ? { ...item, status: "Converti" as ProspectStatus } : item));
       if (editingProspect?.id === prospect.id) { setShowForm(false); setEditingProspect(null); setForm({ ...emptyForm }); }
       setNotice(`${prospect.name} a été converti en client. Retrouve sa fiche dans la rubrique Clients.`);
@@ -181,6 +230,15 @@ export default function ProspectsPage() {
       if (userError || !user) throw new Error("SESSION_REQUIRED");
       const { error: deleteError } = await supabase.from("prospects").delete().eq("id", prospect.id).eq("user_id", user.id);
       if (deleteError) throw deleteError;
+
+      await logProspectActivity(
+        user.id,
+        "delete",
+        prospect.id,
+        `Prospect supprimé : ${prospect.name}${prospect.company ? ` (${prospect.company})` : ""}`,
+        { prospect_name: prospect.name, company: prospect.company, previous_status: prospect.status }
+      );
+
       setProspects((current) => current.filter((item) => item.id !== prospect.id));
       if (editingProspect?.id === prospect.id) { setShowForm(false); setEditingProspect(null); setForm({ ...emptyForm }); }
       setNotice(`La fiche de ${prospect.name} a été supprimée.`);
@@ -208,7 +266,7 @@ export default function ProspectsPage() {
           {[
             { href: "/", label: "Dashboard" }, { href: "/clients", label: "Clients" },
             { href: "/prospects", label: "Prospects" }, { href: "/revenus", label: "Revenus" },
-            { href: "/activites", label: "Activités" }, { href: "/parametres", label: "Paramètres" },
+            { href: "/activite", label: "Activité" }, { href: "/parametres", label: "Paramètres" },
           ].map((item) => {
             const active = item.href === "/prospects";
             return <Link key={item.href} href={item.href} aria-current={active ? "page" : undefined}
