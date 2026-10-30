@@ -293,11 +293,27 @@ export default function VentesPage() {
       resetInvoiceForm();
       setNotice(`La facture ${invoiceNumber} a été créée avec succès.`);
       await loadData(true);
-    } catch (err) {
-      console.error("Erreur de création de facture :", err);
-      const message = err instanceof Error ? err.message : "Une erreur inconnue est survenue.";
-      setInvoiceError(`Impossible de créer la facture : ${message}`);
-    } finally {
+  
+
+      } catch (err: any) {
+  console.error("ERREUR DÉTAILLÉE CRÉATION FACTURE :", err);
+
+  const message =
+    err?.message ||
+    err?.details ||
+    err?.hint ||
+    JSON.stringify(err) ||
+    "Erreur inconnue";
+
+  const code = err?.code ? ` (Code : ${err.code})` : "";
+
+  setInvoiceError(
+    `Impossible de créer la facture : ${message}${code}`
+  );
+}
+    
+    
+    finally {
       setSavingInvoice(false);
     }
   };
