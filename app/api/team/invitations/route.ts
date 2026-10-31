@@ -179,7 +179,7 @@ export async function POST(request: Request) {
 
     const { error: emailError } =
       await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
-        redirectTo: `${origin}/auth/callback`,
+        redirectTo: `${origin}/auth/complete-invitation`,
         data: {
           invited_organization: membership.organization_id,
         },
