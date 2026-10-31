@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createSupabaseBrowserClient } from "../lib/supabase-browser";
 
 const pageTitles: Record<string, string> = {
   "/": "Vue d'ensemble",
@@ -17,8 +18,102 @@ const pageTitles: Record<string, string> = {
 
 export default function Topbar() {
   const pathname = usePathname();
+
   const [search, setSearch] = useState("");
   const [showNotifications, setShowNotifications] = useState(false);
+
+  const [organizationName, setOrganizationName] = useState("Chargement...");
+  const [userInitials, setUserInitials] = useState("...");
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadUserInformation() {
+      try {
+        const supabase = createSupabaseBrowserClient();
+
+        // Récupérer l'utilisateur connecté
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
+
+        if (userError || !user) {
+          if (active) {
+            setOrganizationName("Espace de travail");
+            setUserInitials("?");
+          }
+          return;
+        }
+
+        // Récupérer le nom de l'utilisateur
+        const fullName =
+          user.user_metadata?.full_name ||
+          user.user_metadata?.name ||
+          user.email?.split("@")[0] ||
+          "Utilisateur";
+
+        const initials = fullName
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((part: string) => part.charAt(0).toUpperCase())
+          .join("");
+
+        if (active) {
+          setUserInitials(initials || "U");
+        }
+
+        // Récupérer l'organisation du membre connecté
+        const { data: membership, error: membershipError } =
+          await supabase
+            .from("organization_members")
+            .select("organization_id")
+            .eq("user_id", user.id)
+            .maybeSingle();
+
+        if (membershipError || !membership) {
+          if (active) {
+            setOrganizationName("Espace de travail");
+          }
+          return;
+        }
+
+        // Récupérer le nom de l'organisation
+        const { data: organization, error: organizationError } =
+          await supabase
+            .from("organizations")
+            .select("name")
+            .eq("id", membership.organization_id)
+            .maybeSingle();
+
+        if (active) {
+          setOrganizationName(
+            !organizationError && organization?.name
+              ? organization.name
+              : "Espace de travail"
+          );
+        }
+      } catch (error) {
+        console.error(
+          "Erreur de récupération des informations utilisateur :",
+          error
+        );
+
+        if (active) {
+          setOrganizationName("Espace de travail");
+          setUserInitials("U");
+        }
+      }
+    }
+
+    void loadUserInformation();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const currentTitle =
     pageTitles[pathname] ??
@@ -29,6 +124,7 @@ export default function Topbar() {
 
   function handleSearch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
     const query = search.trim();
 
     if (query) {
@@ -38,16 +134,21 @@ export default function Topbar() {
 
   return (
     <header className="sticky top-0 z-30 flex h-[72px] items-center justify-between gap-4 border-b border-slate-200 bg-white/90 px-4 backdrop-blur-xl sm:px-6 lg:px-9">
+
       <div className="min-w-0">
-        <p className="text-[11px] text-slate-400">
-          Nexora <span className="mx-1">/</span> Espace de travail
+        <p className="truncate text-[11px] text-slate-400">
+          {organizationName}
+          <span className="mx-1">/</span>
+          Espace de travail
         </p>
+
         <h1 className="mt-1 truncate text-sm font-bold text-slate-800 sm:text-base">
           {currentTitle}
         </h1>
       </div>
 
       <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+
         <form
           onSubmit={handleSearch}
           className="hidden items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 transition focus-within:border-violet-400 focus-within:ring-2 focus-within:ring-violet-100 sm:flex"
@@ -55,6 +156,7 @@ export default function Topbar() {
           <span aria-hidden="true" className="text-lg text-slate-400">
             ⌕
           </span>
+
           <input
             aria-label="Rechercher un client"
             value={search}
@@ -62,6 +164,7 @@ export default function Topbar() {
             placeholder="Rechercher un client..."
             className="w-32 bg-transparent text-xs outline-none md:w-44"
           />
+
           <button type="submit" className="sr-only">
             Rechercher
           </button>
@@ -76,13 +179,18 @@ export default function Topbar() {
             className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-lg transition hover:bg-violet-50 hover:text-violet-700"
           >
             ♧
+
             <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-rose-500" />
           </button>
 
           {showNotifications && (
             <div className="absolute right-0 top-12 z-50 w-72 rounded-2xl border border-slate-100 bg-white p-4 shadow-xl sm:w-80">
+
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <h2 className="text-sm font-bold">Notifications</h2>
+                <h2 className="text-sm font-bold">
+                  Notifications
+                </h2>
+
                 <button
                   type="button"
                   onClick={() => setShowNotifications(false)}
@@ -97,7 +205,11 @@ export default function Topbar() {
                 <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-violet-50 text-lg text-violet-600">
                   ♧
                 </div>
-                <p className="text-sm font-semibold">Tout est calme</p>
+
+                <p className="text-sm font-semibold">
+                  Tout est calme
+                </p>
+
                 <p className="mt-1 text-xs text-slate-400">
                   Les notifications réelles seront ajoutées ultérieurement.
                 </p>
@@ -108,9 +220,14 @@ export default function Topbar() {
 
         <div className="hidden h-8 w-px bg-slate-200 sm:block" />
 
-        <Link aria-label="Ouvrir les paramètres" className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 ring-2 ring-white transition hover:ring-violet-200" href="/parametres">
-          YW
+        <Link
+          aria-label="Ouvrir les paramètres"
+          className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700 ring-2 ring-white transition hover:ring-violet-200"
+          href="/parametres"
+        >
+          {userInitials}
         </Link>
+
       </div>
     </header>
   );
