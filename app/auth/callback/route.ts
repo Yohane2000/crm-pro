@@ -12,13 +12,10 @@ export async function GET(request: Request) {
 
   let authError = null;
 
-  // Confirmation par code PKCE
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     authError = error;
-  }
-  // Confirmation par token_hash
-  else if (tokenHash && type) {
+  } else if (tokenHash && type) {
     const { error } = await supabase.auth.verifyOtp({
       token_hash: tokenHash,
       type: type as
@@ -32,8 +29,9 @@ export async function GET(request: Request) {
 
     authError = error;
   } else {
+    // Le navigateur doit traiter le fragment access_token.
     return NextResponse.redirect(
-      new URL("/login?error=confirmation", origin)
+      new URL("/auth/complete-invitation", origin)
     );
   }
 
@@ -45,28 +43,22 @@ export async function GET(request: Request) {
     );
   }
 
-  // Vérifier et accepter une éventuelle invitation
   const { data: invitationAccepted, error: invitationError } =
     await supabase.rpc("accept_organization_invitation");
 
   if (invitationError) {
-    console.error(
-      "Erreur acceptation invitation :",
-      invitationError
-    );
+    console.error("Erreur acceptation invitation :", invitationError);
 
     return NextResponse.redirect(
       new URL("/login?error=invitation", origin)
     );
   }
 
-  // Un collaborateur invité doit définir son mot de passe
   if (invitationAccepted === true) {
     return NextResponse.redirect(
       new URL("/auth/update-password", origin)
     );
   }
 
-  // Inscription classique
   return NextResponse.redirect(new URL("/", origin));
 }
