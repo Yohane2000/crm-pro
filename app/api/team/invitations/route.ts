@@ -6,11 +6,13 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   let invitationId: string | null = null;
-  let supabaseAdmin: ReturnType<typeof createSupabaseAdminClient> | null =
-    null;
+  let supabaseAdmin: ReturnType<typeof createSupabaseAdminClient> | null = null;
+  let stage = "initialisation";
 
   try {
     // 1. Vérifier l'utilisateur connecté
+    stage = "authentification";
+
     const supabase = await createSupabaseServerClient();
 
     const {
@@ -26,6 +28,8 @@ export async function POST(request: Request) {
     }
 
     // 2. Vérifier les données reçues
+    stage = "validation des données";
+
     let body: { email?: unknown; role?: unknown };
 
     try {
@@ -73,9 +77,13 @@ export async function POST(request: Request) {
     }
 
     // 3. Initialiser le client administrateur
+    stage = "initialisation du client Supabase administrateur";
+
     supabaseAdmin = createSupabaseAdminClient();
 
-    // 4. Vérifier le rôle et l'organisation de l'administrateur
+    // 4. Vérifier le rôle et l'organisation
+    stage = "vérification de l'organisation";
+
     const { data: membership, error: membershipError } =
       await supabaseAdmin
         .from("organization_members")
@@ -83,9 +91,7 @@ export async function POST(request: Request) {
         .eq("user_id", user.id)
         .maybeSingle();
 
-    if (membershipError) {
-      throw membershipError;
-    }
+    if (membershipError) throw membershipError;
 
     if (!membership || membership.role !== "admin") {
       return NextResponse.json(
@@ -96,7 +102,9 @@ export async function POST(request: Request) {
       );
     }
 
-    // 5. Révoquer les anciennes invitations expirées
+    // 5. Révoquer les invitations expirées
+    stage = "nettoyage des invitations expirées";
+
     const { error: expirationError } = await supabaseAdmin
       .from("organization_invitations")
       .update({ status: "revoked" })
@@ -104,11 +112,11 @@ export async function POST(request: Request) {
       .eq("status", "pending")
       .lte("expires_at", new Date().toISOString());
 
-    if (expirationError) {
-      throw expirationError;
-    }
+    if (expirationError) throw expirationError;
 
-    // 6. Vérifier les invitations déjà en attente
+    // 6. Vérifier les invitations existantes
+    stage = "vérification des invitations existantes";
+
     const { data: existingInvitation, error: searchError } =
       await supabaseAdmin
         .from("organization_invitations")
@@ -117,9 +125,7 @@ export async function POST(request: Request) {
         .eq("status", "pending")
         .maybeSingle();
 
-    if (searchError) {
-      throw searchError;
-    }
+    if (searchError) throw searchError;
 
     if (existingInvitation) {
       return NextResponse.json(
@@ -130,7 +136,9 @@ export async function POST(request: Request) {
       );
     }
 
-    // 7. Créer une invitation valable 72 heures
+    // 7. Créer l'invitation
+    stage = "création de l'invitation en base de données";
+
     const expiresAt = new Date(
       Date.now() + 72 * 60 * 60 * 1000
     ).toISOString();
@@ -150,7 +158,6 @@ export async function POST(request: Request) {
         .single();
 
     if (invitationError) {
-      // Gestion d'une éventuelle requête concurrente
       if (invitationError.code === "23505") {
         return NextResponse.json(
           {
@@ -165,7 +172,9 @@ export async function POST(request: Request) {
 
     invitationId = invitation.id;
 
-    // 8. Envoyer l'invitation avec Supabase Auth
+    // 8. Envoyer l'email
+    stage = "envoi de l'email Supabase";
+
     const origin = new URL(request.url).origin;
 
     const { error: emailError } =
@@ -177,8 +186,8 @@ export async function POST(request: Request) {
       });
 
     if (emailError) {
-      // Conserver une trace de l'échec sans laisser
-      // une invitation active dans la base
+      console.error("Erreur Supabase Auth :", emailError);
+
       await supabaseAdmin
         .from("organization_invitations")
         .update({ status: "revoked" })
@@ -196,24 +205,22 @@ export async function POST(request: Request) {
         return NextResponse.json(
           {
             error:
-              "Cette adresse possède déjà un compte. Avec l'architecture actuelle, un utilisateur ne peut appartenir qu'à une seule organisation.",
+              "Cette adresse possède déjà un compte. Un utilisateur ne peut appartenir qu'à une seule organisation.",
           },
           { status: 409 }
         );
       }
 
-      console.error("Erreur envoi email Supabase :", emailError);
-
       return NextResponse.json(
         {
-          error:
-            "Supabase n'a pas pu envoyer l'invitation. Vérifie la configuration de ton service email.",
+          error: `Erreur Supabase lors de l'envoi : ${emailError.message}`,
+          stage,
         },
         { status: 400 }
       );
     }
 
-    // 9. Confirmer l'envoi
+    // 9. Confirmation
     return NextResponse.json(
       {
         success: true,
@@ -224,10 +231,11 @@ export async function POST(request: Request) {
     );
 
   } catch (error) {
-    console.error("Erreur API invitation :", error);
+    console.error("Erreur API invitation :", {
+      stage,
+      error,
+    });
 
-    // Nettoyage de sécurité si une erreur survient
-    // après la création de l'invitation
     if (invitationId && supabaseAdmin) {
       await supabaseAdmin
         .from("organization_invitations")
@@ -235,9 +243,14 @@ export async function POST(request: Request) {
         .eq("id", invitationId);
     }
 
+    const details =
+      error instanceof Error
+        ? error.message
+        : "Erreur inconnue";
+
     return NextResponse.json(
       {
-        error: "Une erreur est survenue lors de l'envoi de l'invitation.",
+        error: `Échec à l'étape : ${stage}. Détail : ${details}`,
       },
       { status: 500 }
     );
