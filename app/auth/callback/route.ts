@@ -2,63 +2,60 @@ import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "../../../lib/supabase-server";
 
 export async function GET(request: Request) {
-  const requestUrl = new URL(request.url);
-  const code = requestUrl.searchParams.get("code");
-  const tokenHash = requestUrl.searchParams.get("token_hash");
-  const type = requestUrl.searchParams.get("type");
-  const origin = requestUrl.origin;
+const requestUrl = new URL(request.url);
 
-  const supabase = await createSupabaseServerClient();
+const code = requestUrl.searchParams.get("code");
+const tokenHash = requestUrl.searchParams.get("token_hash");
+const type = requestUrl.searchParams.get("type");
 
-  let authError = null;
+const origin = requestUrl.origin;
 
-  if (code) {
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
-    authError = error;
-  } else if (tokenHash && type) {
-    const { error } = await supabase.auth.verifyOtp({
-      token_hash: tokenHash,
-      type: type as
-        | "signup"
-        | "invite"
-        | "magiclink"
-        | "recovery"
-        | "email"
-        | "email_change",
-    });
+const supabase = await createSupabaseServerClient();
 
-    authError = error;
-  } else {
-    // Le navigateur doit traiter le fragment access_token.
-    return NextResponse.redirect(
-      new URL("/auth/complete-invitation", origin)
-    );
-  }
+// 1. Confirmation avec PKCE
+if (code) {
+const { error } = await supabase.auth.exchangeCodeForSession(code);
 
-  if (authError) {
-    console.error("Erreur confirmation Supabase :", authError);
+```
+if (error) {
+  console.error("Erreur échange du code :", error);
 
-    return NextResponse.redirect(
-      new URL("/login?error=confirmation", origin)
-    );
-  }
+  return NextResponse.redirect(
+    new URL("/login?error=confirmation", origin)
+  );
+}
+```
 
-  const { data: invitationAccepted, error: invitationError } =
-    await supabase.rpc("accept_organization_invitation");
+}
 
-  if (invitationError) {
-    console.error("Erreur acceptation invitation :", invitationError);
+// 2. Confirmation avec token_hash
+else if (tokenHash && type === "invite") {
+const { error } = await supabase.auth.verifyOtp({
+token_hash: tokenHash,
+type: "invite",
+});
 
-    return NextResponse.redirect(
-      new URL("/login?error=invitation", origin)
-    );
-  }
+```
+if (error) {
+  console.error("Erreur vérification invitation :", error);
 
-  if (invitationAccepted === true) {
-    return NextResponse.redirect(
-      new URL("/auth/update-password", origin)
-    );
-  }
+  return NextResponse.redirect(
+    new URL("/login?error=confirmation", origin)
+  );
+}
+```
 
-  return NextResponse.redirect(new URL("/", origin));
+}
+
+// 3. Aucun code : laisser le navigateur traiter les jetons
+else {
+return NextResponse.redirect(
+new URL("/auth/complete-invitation", origin)
+);
+}
+
+// 4. Centraliser l'acceptation dans la page navigateur
+return NextResponse.redirect(
+new URL("/auth/complete-invitation", origin)
+);
 }
