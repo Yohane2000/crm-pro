@@ -47,14 +47,7 @@ if (error) {
 
 }
 
-// 3. Aucun code : laisser le navigateur traiter les jetons
-else {
-return NextResponse.redirect(
-new URL("/auth/complete-invitation", origin)
-);
-}
-
-// 4. Centraliser l'acceptation dans la page navigateur
+// 3. Centraliser la finalisation dans le navigateur
 return NextResponse.redirect(
 new URL("/auth/complete-invitation", origin)
 );
