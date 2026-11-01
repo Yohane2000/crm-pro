@@ -5,254 +5,268 @@ import { createSupabaseAdminClient } from "../../../../lib/supabase-admin";
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  let invitationId: string | null = null;
-  let supabaseAdmin: ReturnType<typeof createSupabaseAdminClient> | null = null;
-  let stage = "initialisation";
+let invitationId: string | null = null;
+let supabaseAdmin: ReturnType<typeof createSupabaseAdminClient> | null = null;
+let stage = "initialisation";
 
-  try {
-    // 1. Vérifier l'utilisateur connecté
-    stage = "authentification";
+try {
+// 1. Vérifier l'utilisateur connecté
+stage = "authentification";
 
-    const supabase = await createSupabaseServerClient();
 
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
+const supabase = await createSupabaseServerClient();
 
-    if (authError || !user || !user.email) {
-      return NextResponse.json(
-        { error: "Vous devez être connecté." },
-        { status: 401 }
-      );
-    }
+const {
+  data: { user },
+  error: authError,
+} = await supabase.auth.getUser();
 
-    // 2. Vérifier les données reçues
-    stage = "validation des données";
+if (authError || !user || !user.email) {
+  return NextResponse.json(
+    { error: "Vous devez être connecté." },
+    { status: 401 }
+  );
+}
 
-    let body: { email?: unknown; role?: unknown };
+// 2. Vérifier les données reçues
+stage = "validation des données";
 
-    try {
-      body = await request.json();
-    } catch {
-      return NextResponse.json(
-        { error: "Données de requête invalides." },
-        { status: 400 }
-      );
-    }
+let body: { email?: unknown; role?: unknown };
 
-    const email =
-      typeof body.email === "string"
-        ? body.email.trim().toLowerCase()
-        : "";
+try {
+  body = await request.json();
+} catch {
+  return NextResponse.json(
+    { error: "Données de requête invalides." },
+    { status: 400 }
+  );
+}
 
-    const role = body.role;
+const email =
+  typeof body.email === "string"
+    ? body.email.trim().toLowerCase()
+    : "";
 
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return NextResponse.json(
-        { error: "Adresse email invalide." },
-        { status: 400 }
-      );
-    }
+const role = body.role;
 
-    if (email.length > 254) {
-      return NextResponse.json(
-        { error: "Adresse email trop longue." },
-        { status: 400 }
-      );
-    }
+if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  return NextResponse.json(
+    { error: "Adresse email invalide." },
+    { status: 400 }
+  );
+}
 
-    if (role !== "commercial" && role !== "comptable") {
-      return NextResponse.json(
-        { error: "Rôle invalide." },
-        { status: 400 }
-      );
-    }
+if (email.length > 254) {
+  return NextResponse.json(
+    { error: "Adresse email trop longue." },
+    { status: 400 }
+  );
+}
 
-    if (email === user.email.trim().toLowerCase()) {
-      return NextResponse.json(
-        { error: "Vous ne pouvez pas vous inviter vous-même." },
-        { status: 400 }
-      );
-    }
+if (role !== "commercial" && role !== "comptable") {
+  return NextResponse.json(
+    { error: "Rôle invalide." },
+    { status: 400 }
+  );
+}
 
-    // 3. Initialiser le client administrateur
-    stage = "initialisation du client Supabase administrateur";
+if (email === user.email.trim().toLowerCase()) {
+  return NextResponse.json(
+    { error: "Vous ne pouvez pas vous inviter vous-même." },
+    { status: 400 }
+  );
+}
 
-    supabaseAdmin = createSupabaseAdminClient();
+// 3. Initialiser le client administrateur
+stage = "initialisation du client Supabase administrateur";
 
-    // 4. Vérifier le rôle et l'organisation
-    stage = "vérification de l'organisation";
+supabaseAdmin = createSupabaseAdminClient();
 
-    const { data: membership, error: membershipError } =
-      await supabaseAdmin
-        .from("organization_members")
-        .select("organization_id, role")
-        .eq("user_id", user.id)
-        .maybeSingle();
+// 4. Vérifier le rôle et l'organisation
+stage = "vérification de l'organisation";
 
-    if (membershipError) throw membershipError;
+const { data: membership, error: membershipError } =
+  await supabaseAdmin
+    .from("organization_members")
+    .select("organization_id, role")
+    .eq("user_id", user.id)
+    .maybeSingle();
 
-    if (!membership || membership.role !== "admin") {
-      return NextResponse.json(
-        {
-          error: "Seuls les administrateurs peuvent inviter des collaborateurs.",
-        },
-        { status: 403 }
-      );
-    }
+if (membershipError) throw membershipError;
 
-    // 5. Révoquer les invitations expirées
-    stage = "nettoyage des invitations expirées";
+if (!membership || membership.role !== "admin") {
+  return NextResponse.json(
+    {
+      error: "Seuls les administrateurs peuvent inviter des collaborateurs.",
+    },
+    { status: 403 }
+  );
+}
 
-    const { error: expirationError } = await supabaseAdmin
-      .from("organization_invitations")
-      .update({ status: "revoked" })
-      .eq("email", email)
-      .eq("status", "pending")
-      .lte("expires_at", new Date().toISOString());
+// 5. Révoquer les invitations expirées
+stage = "nettoyage des invitations expirées";
 
-    if (expirationError) throw expirationError;
+const { error: expirationError } = await supabaseAdmin
+  .from("organization_invitations")
+  .update({ status: "revoked" })
+  .eq("email", email)
+  .eq("status", "pending")
+  .lte("expires_at", new Date().toISOString());
 
-    // 6. Vérifier les invitations existantes
-    stage = "vérification des invitations existantes";
+if (expirationError) throw expirationError;
 
-    const { data: existingInvitation, error: searchError } =
-      await supabaseAdmin
-        .from("organization_invitations")
-        .select("id")
-        .eq("email", email)
-        .eq("status", "pending")
-        .maybeSingle();
+// 6. Vérifier les invitations existantes
+stage = "vérification des invitations existantes";
 
-    if (searchError) throw searchError;
+const { data: existingInvitation, error: searchError } =
+  await supabaseAdmin
+    .from("organization_invitations")
+    .select("id")
+    .eq("email", email)
+    .eq("status", "pending")
+    .maybeSingle();
 
-    if (existingInvitation) {
-      return NextResponse.json(
-        {
-          error: "Une invitation est déjà en attente pour cette adresse email.",
-        },
-        { status: 409 }
-      );
-    }
+if (searchError) throw searchError;
 
-    // 7. Créer l'invitation
-    stage = "création de l'invitation en base de données";
+if (existingInvitation) {
+  return NextResponse.json(
+    {
+      error: "Une invitation est déjà en attente pour cette adresse email.",
+    },
+    { status: 409 }
+  );
+}
 
-    const expiresAt = new Date(
-      Date.now() + 72 * 60 * 60 * 1000
-    ).toISOString();
+// 7. Créer l'invitation en base de données
+stage = "création de l'invitation en base de données";
 
-    const { data: invitation, error: invitationError } =
-      await supabaseAdmin
-        .from("organization_invitations")
-        .insert({
-          organization_id: membership.organization_id,
-          email,
-          role,
-          invited_by: user.id,
-          status: "pending",
-          expires_at: expiresAt,
-        })
-        .select("id")
-        .single();
+const expiresAt = new Date(
+  Date.now() + 72 * 60 * 60 * 1000
+).toISOString();
 
-    if (invitationError) {
-      if (invitationError.code === "23505") {
-        return NextResponse.json(
-          {
-            error: "Une invitation est déjà en attente pour cette adresse email.",
-          },
-          { status: 409 }
-        );
-      }
+const { data: invitation, error: invitationError } =
+  await supabaseAdmin
+    .from("organization_invitations")
+    .insert({
+      organization_id: membership.organization_id,
+      email,
+      role,
+      invited_by: user.id,
+      status: "pending",
+      expires_at: expiresAt,
+    })
+    .select("id")
+    .single();
 
-      throw invitationError;
-    }
-
-    invitationId = invitation.id;
-
-    // 8. Envoyer l'email
-    stage = "envoi de l'email Supabase";
-
-    const origin = new URL(request.url).origin;
-
-    const { error: emailError } =
-      await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
-        redirectTo: `${origin}/auth/complete-invitation`,
-        data: {
-          invited_organization: membership.organization_id,
-        },
-      });
-
-    if (emailError) {
-      console.error("Erreur Supabase Auth :", emailError);
-
-      await supabaseAdmin
-        .from("organization_invitations")
-        .update({ status: "revoked" })
-        .eq("id", invitationId);
-
-      invitationId = null;
-
-      const message = emailError.message.toLowerCase();
-
-      if (
-        message.includes("already registered") ||
-        message.includes("already exists") ||
-        message.includes("already been registered")
-      ) {
-        return NextResponse.json(
-          {
-            error:
-              "Cette adresse possède déjà un compte. Un utilisateur ne peut appartenir qu'à une seule organisation.",
-          },
-          { status: 409 }
-        );
-      }
-
-      return NextResponse.json(
-        {
-          error: `Erreur Supabase lors de l'envoi : ${emailError.message}`,
-          stage,
-        },
-        { status: 400 }
-      );
-    }
-
-    // 9. Confirmation
+if (invitationError) {
+  if (invitationError.code === "23505") {
     return NextResponse.json(
       {
-        success: true,
-        message: "Invitation envoyée avec succès.",
-        expires_at: expiresAt,
+        error: "Une invitation est déjà en attente pour cette adresse email.",
       },
-      { status: 201 }
-    );
-
-  } catch (error) {
-    console.error("Erreur API invitation :", {
-      stage,
-      error,
-    });
-
-    if (invitationId && supabaseAdmin) {
-      await supabaseAdmin
-        .from("organization_invitations")
-        .update({ status: "revoked" })
-        .eq("id", invitationId);
-    }
-
-    const details =
-      error instanceof Error
-        ? error.message
-        : "Erreur inconnue";
-
-    return NextResponse.json(
-      {
-        error: `Échec à l'étape : ${stage}. Détail : ${details}`,
-      },
-      { status: 500 }
+      { status: 409 }
     );
   }
+
+  throw invitationError;
+}
+
+invitationId = invitation.id;
+
+// 8. Envoyer l'email et diagnostiquer la réponse Supabase
+stage = "envoi de l'email Supabase";
+
+const origin = new URL(request.url).origin;
+const redirectTo = `${origin}/auth/complete-invitation`;
+
+const { data: invitationData, error: emailError } =
+  await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
+    redirectTo,
+    data: {
+      invited_organization: membership.organization_id,
+    },
+  });
+
+console.log("INVITATION DEBUG :", {
+  requestedRedirect: redirectTo,
+  userId: invitationData?.user?.id,
+  email: invitationData?.user?.email,
+  error: emailError?.message ?? null,
+});
+
+if (emailError) {
+  console.error("Erreur Supabase Auth :", emailError);
+
+  await supabaseAdmin
+    .from("organization_invitations")
+    .update({ status: "revoked" })
+    .eq("id", invitationId);
+
+  invitationId = null;
+
+  const message = emailError.message.toLowerCase();
+
+  if (
+    message.includes("already registered") ||
+    message.includes("already exists") ||
+    message.includes("already been registered")
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Cette adresse possède déjà un compte. Un utilisateur ne peut appartenir qu'à une seule organisation.",
+      },
+      { status: 409 }
+    );
+  }
+
+  return NextResponse.json(
+    {
+      error: `Erreur Supabase lors de l'envoi : ${emailError.message}`,
+      stage,
+    },
+    { status: 400 }
+  );
+}
+
+// 9. Confirmation
+return NextResponse.json(
+  {
+    success: true,
+    message: "Invitation envoyée avec succès.",
+    expires_at: expiresAt,
+    redirect_to: redirectTo,
+    invited_user_id: invitationData?.user?.id ?? null,
+  },
+  { status: 201 }
+);
+
+
+} catch (error) {
+console.error("Erreur API invitation :", {
+stage,
+error,
+});
+
+
+if (invitationId && supabaseAdmin) {
+  await supabaseAdmin
+    .from("organization_invitations")
+    .update({ status: "revoked" })
+    .eq("id", invitationId);
+}
+
+const details =
+  error instanceof Error
+    ? error.message
+    : "Erreur inconnue";
+
+return NextResponse.json(
+  {
+    error: `Échec à l'étape : ${stage}. Détail : ${details}`,
+  },
+  { status: 500 }
+);
+
+}
 }
