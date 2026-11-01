@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "../../../lib/supabase-browser";
 import { Loader2, ShieldCheck, AlertCircle } from "lucide-react";
 
 export default function CompleteInvitationPage() {
   const router = useRouter();
+
+  const processing = useRef(false);
 
   const [message, setMessage] = useState(
     "Vérification de votre invitation..."
@@ -18,10 +20,54 @@ export default function CompleteInvitationPage() {
     let active = true;
 
     async function completeInvitation() {
+      if (processing.current) return;
+
+      processing.current = true;
+
       try {
         const supabase = createSupabaseBrowserClient();
 
-        // 1. Récupérer la session créée par le lien d'invitation
+        // 1. Récupérer les jetons présents dans l'URL
+        const hash = window.location.hash;
+
+        if (hash) {
+          const params = new URLSearchParams(hash.substring(1));
+
+          const accessToken = params.get("access_token");
+          const refreshToken = params.get("refresh_token");
+          const authError = params.get("error_description");
+
+          if (authError) {
+            throw new Error(
+              decodeURIComponent(authError.replace(/\+/g, " "))
+            );
+          }
+
+          if (accessToken && refreshToken) {
+            if (active) {
+              setMessage("Activation de votre session...");
+            }
+
+            const { error: sessionError } =
+              await supabase.auth.setSession({
+                access_token: accessToken,
+                refresh_token: refreshToken,
+              });
+
+            if (sessionError) {
+              throw sessionError;
+            }
+
+            // Retirer les jetons de la barre d'adresse
+            window.history.replaceState(
+              {},
+              document.title,
+              window.location.pathname + window.location.search
+            );
+          }
+        }
+
+        // 2. Vérifier la session Supabase
         const {
           data: { session },
           error: sessionError,
@@ -33,7 +79,7 @@ export default function CompleteInvitationPage() {
 
         if (!session) {
           throw new Error(
-            "Votre invitation n'a pas pu être vérifiée. Demandez un nouveau lien d'invitation."
+            "Votre session n'a pas pu être établie. Demandez un nouveau lien d'invitation."
           );
         }
 
@@ -41,7 +87,7 @@ export default function CompleteInvitationPage() {
           setMessage("Validation de votre invitation...");
         }
 
-        // 2. Accepter l'invitation et rejoindre l'organisation
+        // 3. Accepter l'invitation
         const {
           data: invitationAccepted,
           error: invitationError,
@@ -57,13 +103,14 @@ export default function CompleteInvitationPage() {
           );
         }
 
+        // 4. Rediriger vers la création du mot de passe
         if (active) {
-          setMessage("Invitation acceptée ! Préparation de votre compte...");
+          setMessage(
+            "Invitation acceptée ! Préparation de votre compte..."
+          );
+
+          router.replace("/auth/update-password");
         }
-
-        // 3. Rediriger vers la création du mot de passe
-        router.replace("/auth/update-password");
-
       } catch (err) {
         console.error(
           "Erreur de finalisation de l'invitation :",
