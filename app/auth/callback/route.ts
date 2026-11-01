@@ -16,7 +16,7 @@ const supabase = await createSupabaseServerClient();
 if (code) {
 const { error } = await supabase.auth.exchangeCodeForSession(code);
 
-```
+
 if (error) {
   console.error("Erreur échange du code :", error);
 
@@ -24,7 +24,7 @@ if (error) {
     new URL("/login?error=confirmation", origin)
   );
 }
-```
+
 
 }
 
@@ -35,7 +35,7 @@ token_hash: tokenHash,
 type: "invite",
 });
 
-```
+
 if (error) {
   console.error("Erreur vérification invitation :", error);
 
@@ -43,7 +43,6 @@ if (error) {
     new URL("/login?error=confirmation", origin)
   );
 }
-```
 
 }
 
